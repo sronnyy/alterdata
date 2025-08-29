@@ -4,8 +4,8 @@ import { Toaster } from "react-hot-toast";
 
 
 export const metadata = {
-  title: "Prefeitura de Terra Boa",
-  description: "Terra Boa - PR",
+  title: "AlterData",
+  description: "Sistema de Gestão",
 };
 
 export default function RootLayout({ children }) {
