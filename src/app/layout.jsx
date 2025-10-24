@@ -12,7 +12,7 @@ export default function RootLayout({ children }) {
   
   return (
     <html lang="pt-BR">
-      <body className="bg-gray-50">
+      <body className="bg-white text-gray-900">
 
           <Providers>
             <Toaster
@@ -24,7 +24,7 @@ export default function RootLayout({ children }) {
                   padding: "1rem",
                   borderRadius: "8px",
                   background: "#fff",
-                  color: "#000",
+                  color: "#111827",
                 },
               }}
               gutter={8}

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="64" viewBox="0 0 240 64">
+  <rect width="240" height="64" fill="#0a0a0a"/>
+  <g transform="translate(16,16)">
+    <!-- Minimal monogram A -->
+    <path d="M0 32 L12 0 L24 32 L18 32 L12 16 L6 32 Z" fill="#ffffff"/>
+    <!-- Data bar -->
+    <rect x="28" y="22" width="20" height="4" fill="#9ca3af"/>
+  </g>
+  <text x="64" y="40" font-family="Helvetica, Arial, sans-serif" font-size="28" font-weight="700" fill="#ffffff">ALTERDATA</text>
+</svg>

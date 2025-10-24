@@ -80,22 +80,24 @@ const LoginForm = () => {
   };
 
   return (
-    <div className="min-h-screen bg-neutral-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-white text-gray-900 flex items-center justify-center p-4 relative">
+      <header className="absolute top-4 left-4 flex items-center gap-3">
+        <img src="/images/image.png" alt="ALTERDATA" className="h-8 w-auto" />
+        <span className="text-xl font-semibold">ALTERDATA</span>
+      </header>
       <motion.form
         onSubmit={handleSubmit}
-        className="bg-white rounded-xl p-8 w-full max-w-md shadow-2xl border border-neutral-100"
+        className="bg-white rounded-xl p-8 w-full max-w-md shadow-2xl border border-gray-100"
         variants={containerVariants}
         initial="hidden"
         animate="visible"
       >
         <motion.div variants={itemVariants}>
-          <div className="flex justify-center mb-8">
-            <img src="/images/logo.png" className='w-50' alt="" />
-          </div>
-          <h2 className="text-3xl font-semibold text-center text-neutral-700 mb-2">
+          <div className="mb-2"></div>
+          <h2 className="text-3xl font-semibold text-center text-gray-900 mb-2">
             Bem-vindo!
           </h2>
-          <p className="text-center text-neutral-500 mb-8">
+          <p className="text-center text-gray-600 mb-8">
             Entre para acessar o painel.
           </p>
         </motion.div>
@@ -113,12 +115,12 @@ const LoginForm = () => {
         <motion.div variants={itemVariants} className="space-y-6">
           <div>
             <div className="relative">
-              <EnvelopeIcon className="w-5 h-5 text-neutral-400 absolute left-4 top-1/2 -translate-y-1/2" />
+              <EnvelopeIcon className="w-5 h-5 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" />
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-12 pr-4 py-3 bg-white border border-neutral-200 rounded-lg text-neutral-700 placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all hover:border-neutral-300"
+                className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition-all hover:border-gray-300"
                 placeholder="seuemail@gmail.com"
                 required
               />
@@ -127,12 +129,12 @@ const LoginForm = () => {
 
           <div>
             <div className="relative">
-              <LockClosedIcon className="w-5 h-5 text-neutral-400 absolute left-4 top-1/2 -translate-y-1/2" />
+              <LockClosedIcon className="w-5 h-5 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" />
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-12 pr-4 py-3 bg-white border border-neutral-200 rounded-lg text-neutral-700 placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent transition-all hover:border-neutral-300"
+                className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition-all hover:border-gray-300"
                 placeholder="••••••••"
                 required
               />
@@ -143,7 +145,7 @@ const LoginForm = () => {
             whileHover={{ y: -1 }}
             whileTap={{ scale: 0.98 }}
             type="submit"
-            className="w-full bg-blue-950 text-white py-3.5 rounded-lg font-medium hover:bg-neutral-800 transition-all disabled:opacity-50"
+            className="w-full bg-gray-900 text-white py-3.5 rounded-lg font-medium hover:bg-gray-800 transition-all disabled:opacity-50"
             disabled={loading}
           >
             {loading ? 'Entrando...' : 'Entrar'}
