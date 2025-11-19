@@ -42,7 +42,59 @@ export async function GET(request) {
     }
 
     const data = await response.json();
-    return NextResponse.json(data);
+
+    // Verifica se existe a chave "data"
+    if (!data.data || !Array.isArray(data.data) || data.data.length === 0) {
+      return NextResponse.json({
+        records: [],
+        metadata: {
+          currentPage: 1,
+          perPage: 50,
+          totalCount: 0,
+          totalPages: 1,
+        },
+      });
+    }
+
+    const registros = data.data;
+
+    // Agrupa verbas por funcionário
+    const funcionarios = {};
+
+    registros.forEach((rec) => {
+      const empId = rec.employeeId;
+
+      if (!funcionarios[empId]) {
+        funcionarios[empId] = {
+          employeeId: empId,
+          externalId: rec.externalId || null,
+          events: [],
+        };
+      }
+
+      funcionarios[empId].events.push({
+        date: rec.date || null,
+        eventCode: rec.eventCode || null,
+        description: rec.eventDescription || null,
+        value: rec.eventValue || null,
+        decimal: rec.eventDecimalValue || null,
+        hm: rec.eventValueInHoursAndMinutes || null,
+        type: rec.eventType || null,
+      });
+    });
+
+    // Converte objeto em array
+    const records = Object.values(funcionarios);
+
+    return NextResponse.json({
+      records: records,
+      metadata: {
+        currentPage: 1,
+        perPage: 50,
+        totalCount: records.length,
+        totalPages: 1,
+      },
+    });
   } catch (error) {
     console.error('Erro ao buscar verbas:', error);
     return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 });
