@@ -170,15 +170,36 @@ export default function Dashboard() {
 
   // Fetch Companies
   const fetchCompanies = async () => {
+    console.log('🏢 [FRONTEND] ==========================================');
+    console.log('🏢 [FRONTEND] Iniciando busca de empresas...');
+    const startTime = Date.now();
+    
     setIsFetchingCompanies(true);
     try {
+      console.log('🏢 [FRONTEND] Fazendo requisição para /api/companies');
       const res = await fetch('/api/companies');
-      if (!res.ok) throw new Error('Falha ao buscar empresas');
+      
+      const responseTime = Date.now() - startTime;
+      console.log(`🏢 [FRONTEND] Resposta recebida em ${responseTime}ms - Status: ${res.status}`);
+      
+      if (!res.ok) {
+        console.error('❌ [FRONTEND] Erro ao buscar empresas:', res.status);
+        throw new Error('Falha ao buscar empresas');
+      }
       
       const data = await res.json();
-      setCompanies(data.records || []);
+      const companiesList = data.records || [];
+      console.log(`✅ [FRONTEND] Empresas carregadas: ${companiesList.length}`);
+      console.log('🏢 [FRONTEND] Empresas encontradas:', companiesList.map(c => ({
+        id: c.id || c._id,
+        name: c.name
+      })));
+      
+      setCompanies(companiesList);
+      console.log('🏢 [FRONTEND] ==========================================');
     } catch (e) {
-      console.error('fetchCompanies error:', e);
+      const responseTime = Date.now() - startTime;
+      console.error(`❌ [FRONTEND] Erro ao buscar empresas (${responseTime}ms):`, e.message);
       setCompanies([]);
     } finally {
       setIsFetchingCompanies(false);
@@ -187,7 +208,39 @@ export default function Dashboard() {
 
   // Fetch Budgets
   const fetchBudgets = async () => {
+    console.log('💰 [FRONTEND] ==========================================');
+    console.log('💰 [FRONTEND] Iniciando busca de verbas...');
+    
+    // Validação antes de fazer a requisição
+    if (!budgetsFilters.year || !budgetsFilters.month || !budgetsFilters.companyId) {
+      console.warn('⚠️ [FRONTEND] Parâmetros obrigatórios não preenchidos:', {
+        year: budgetsFilters.year,
+        month: budgetsFilters.month,
+        companyId: budgetsFilters.companyId
+      });
+      setBudgets([]);
+      return;
+    }
+
+    // Buscar informações da empresa selecionada
+    const selectedCompany = companies.find(c => (c.id || c._id) === budgetsFilters.companyId);
+    console.log('💰 [FRONTEND] Empresa selecionada:', {
+      id: budgetsFilters.companyId,
+      name: selectedCompany?.name || 'N/A',
+      legalName: selectedCompany?.legalName || 'N/A'
+    });
+    console.log('💰 [FRONTEND] Filtros aplicados:', {
+      year: budgetsFilters.year,
+      month: budgetsFilters.month,
+      companyId: budgetsFilters.companyId,
+      employeeIds: budgetsFilters.employeeIds || 'não informado',
+      externalIds: budgetsFilters.externalIds || 'não informado',
+      budgetConfigId: budgetsFilters.budgetConfigId || 'não informado'
+    });
+
+    const startTime = Date.now();
     setIsFetchingBudgets(true);
+    
     try {
       // Formatar mês com zero à esquerda (ex: "09" para setembro)
       const monthFormatted = String(budgetsFilters.month).padStart(2, '0');
@@ -203,20 +256,66 @@ export default function Dashboard() {
         pageSize: String(budgetsFilters.pageSize),
       });
 
-      const res = await fetch(`/api/budgets?${params.toString()}`);
-      if (!res.ok) throw new Error('Falha ao buscar verbas');
+      const url = `/api/budgets?${params.toString()}`;
+      console.log('💰 [FRONTEND] Fazendo requisição para:', url);
+      
+      const res = await fetch(url);
+      const responseTime = Date.now() - startTime;
+      console.log(`💰 [FRONTEND] Resposta recebida em ${responseTime}ms - Status: ${res.status}`);
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: 'Erro desconhecido' }));
+        const errorMessage = errorData.error || `Erro ${res.status}: Falha ao buscar verbas`;
+        
+        console.error('❌ [FRONTEND] Erro na resposta:', {
+          status: res.status,
+          error: errorData.error,
+          code: errorData.code
+        });
+        
+        // Mensagens específicas para diferentes tipos de erro
+        if (res.status === 429 || errorData.code === 'RATE_LIMIT') {
+          throw new Error('A API está bloqueando requisições. Aguarde alguns instantes e tente novamente.');
+        } else if (res.status === 400) {
+          throw new Error(errorData.error || 'Parâmetros inválidos. Verifique os filtros selecionados.');
+        } else {
+          throw new Error(errorMessage);
+        }
+      }
       
       const data = await res.json();
-      setBudgets(data.records || []);
+      
+      // Verifica se há erro na resposta mesmo com status OK
+      if (data.error) {
+        console.error('❌ [FRONTEND] Erro na resposta:', data.error);
+        throw new Error(data.error);
+      }
+      
+      const records = data.records || [];
+      const totalCount = Number(data.metadata?.totalCount ?? 0);
+      
+      console.log(`✅ [FRONTEND] Verbas carregadas: ${records.length} funcionários`);
+      console.log('💰 [FRONTEND] Resumo dos funcionários:');
+      records.forEach((func, index) => {
+        const totalEventos = func.events?.length || 0;
+        console.log(`  ${index + 1}. ${func.employeeName || func.externalId || func.employeeId} - ${totalEventos} evento(s)`);
+      });
+      console.log(`✅ [FRONTEND] Total de eventos: ${records.reduce((sum, f) => sum + (f.events?.length || 0), 0)}`);
+      console.log('💰 [FRONTEND] ==========================================');
+      
+      setBudgets(records);
       setBudgetsPagination(prev => ({
         ...prev,
         page: Number(data.metadata?.currentPage ?? 1),
-        total: Number(data.metadata?.totalCount ?? 0),
+        total: totalCount,
         totalPages: Number(data.metadata?.totalPages ?? 1),
       }));
-      setStats(p => ({ ...p, totalBudgets: Number(data.metadata?.totalCount ?? 0) }));
+      setStats(p => ({ ...p, totalBudgets: totalCount }));
     } catch (e) {
-      console.error('fetchBudgets error:', e);
+      const responseTime = Date.now() - startTime;
+      console.error(`❌ [FRONTEND] Erro ao buscar verbas (${responseTime}ms):`, e.message);
+      // Mostra mensagem de erro mais amigável
+      alert(e.message || 'Erro ao buscar verbas. Tente novamente.');
       setBudgets([]);
     } finally {
       setIsFetchingBudgets(false);
@@ -317,7 +416,9 @@ export default function Dashboard() {
 
   // Verbas (budgets)
   useEffect(() => {
-    if (activeTab === 'budgets') fetchBudgets();
+    if (activeTab === 'budgets' && budgetsFilters.year && budgetsFilters.month && budgetsFilters.companyId) {
+      fetchBudgets();
+    }
   }, [budgetsFilters.page, budgetsFilters.pageSize, budgetsFilters.year, budgetsFilters.month, budgetsFilters.companyId, activeTab]);
 
   useEffect(() => {
@@ -1102,46 +1203,44 @@ export default function Dashboard() {
 
   const renderBudgetsTab = () => (
     <div className="space-y-6">
-      <div className={`rounded-xl shadow-lg p-6 transition-colors ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
-        <div className="flex justify-between items-center flex-wrap gap-4">
-          <div>
-            <h2 className={`text-xl font-semibold ${darkMode ? 'text-gray-200' : 'text-gray-700'}`}>
-              Gestão de Verbas
-            </h2>
-            <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-              Controle e acompanhamento de verbas orçamentárias
-            </p>
-          </div>
+      <div className="rounded-2xl shadow-xl bg-white border border-gray-100 overflow-hidden">
+        <div className="px-8 py-6 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100">
+          <div className="flex justify-between items-center flex-wrap gap-6">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
+                Gestão de Verbas
+              </h2>
+              <p className="text-sm text-gray-500 font-medium mt-1.5">
+                Controle e acompanhamento de verbas orçamentárias
+              </p>
+            </div>
 
-          <div className="flex flex-wrap gap-3">
-            <button 
-              onClick={() => setShowBudgetsFilters(!showBudgetsFilters)}
-              className={`px-4 py-2 rounded-lg border flex items-center gap-2 transition-all ${
-                darkMode 
-                  ? 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600' 
-                  : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              {showBudgetsFilters ? <FiEyeOff size={16} /> : <FiEye size={16} />}
-              {showBudgetsFilters ? 'Ocultar Filtros' : 'Mostrar Filtros'}
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button 
+                onClick={() => setShowBudgetsFilters(!showBudgetsFilters)}
+                className="px-5 py-2.5 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-all duration-200 flex items-center gap-2 font-medium shadow-sm hover:shadow-md"
+              >
+                {showBudgetsFilters ? <FiEyeOff size={18} /> : <FiEye size={18} />}
+                {showBudgetsFilters ? 'Ocultar Filtros' : 'Mostrar Filtros'}
+              </button>
 
-            <button 
-              onClick={fetchBudgets} 
-              disabled={isFetchingBudgets || !budgetsFilters.companyId}
-              className="px-4 py-2 bg-gray-900 text-white rounded-lg shadow hover:bg-gray-800 transition-all flex items-center gap-2 disabled:opacity-50"
-            >
-              {isFetchingBudgets ? <FiRefreshCw className="animate-spin" /> : <FiSearch />}
-              {isFetchingBudgets ? 'Buscando...' : 'Buscar Verbas'}
-            </button>
+              <button 
+                onClick={fetchBudgets} 
+                disabled={isFetchingBudgets || !budgetsFilters.companyId}
+                className="px-6 py-2.5 bg-gray-900 text-white rounded-xl shadow-lg hover:bg-gray-800 hover:shadow-xl transition-all duration-200 flex items-center gap-2 font-semibold disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-lg"
+              >
+                {isFetchingBudgets ? <FiRefreshCw className="animate-spin" size={18} /> : <FiSearch size={18} />}
+                {isFetchingBudgets ? 'Buscando...' : 'Buscar Verbas'}
+              </button>
+            </div>
           </div>
         </div>
 
         {showBudgetsFilters && (
-          <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="px-8 py-6 bg-white border-t border-gray-100">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               <div>
-                <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                <label className="block text-sm font-semibold text-gray-700 mb-2.5">
                   Ano <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -1149,27 +1248,19 @@ export default function Dashboard() {
                   name="year"
                   value={budgetsFilters.year}
                   onChange={handleBudgetsFilterChange}
-                  className={`w-full px-3 py-2 rounded-lg border transition-colors ${
-                    darkMode 
-                      ? 'bg-gray-700 border-gray-600 text-white focus:border-gray-900' 
-                      : 'bg-white border-gray-300 text-gray-900 focus:border-gray-900'
-                  } focus:outline-none focus:ring-2 focus:ring-gray-900 focus:ring-opacity-20`}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white text-gray-900 focus:border-gray-900 focus:ring-2 focus:ring-gray-900 focus:ring-opacity-10 transition-all duration-200 font-medium"
                 />
               </div>
               
               <div>
-                <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                <label className="block text-sm font-semibold text-gray-700 mb-2.5">
                   Mês <span className="text-red-500">*</span>
                 </label>
                 <select
                   name="month"
                   value={budgetsFilters.month}
                   onChange={handleBudgetsFilterChange}
-                  className={`w-full px-3 py-2 rounded-lg border transition-colors ${
-                    darkMode 
-                      ? 'bg-gray-700 border-gray-600 text-white focus:border-blue-500' 
-                      : 'bg-white border-gray-300 text-gray-900 focus:border-blue-500'
-                  } focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-20`}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white text-gray-900 focus:border-gray-900 focus:ring-2 focus:ring-gray-900 focus:ring-opacity-10 transition-all duration-200 font-medium"
                 >
                   {[
                     { value: 1, label: 'Janeiro' },
@@ -1193,7 +1284,7 @@ export default function Dashboard() {
               </div>
 
               <div>
-                <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                <label className="block text-sm font-semibold text-gray-700 mb-2.5">
                   Empresa <span className="text-red-500">*</span>
                 </label>
                 <select
@@ -1201,11 +1292,7 @@ export default function Dashboard() {
                   value={budgetsFilters.companyId}
                   onChange={handleBudgetsFilterChange}
                   disabled={isFetchingCompanies}
-                  className={`w-full px-3 py-2 rounded-lg border transition-colors ${
-                    darkMode 
-                      ? 'bg-gray-700 border-gray-600 text-white focus:border-gray-900 disabled:opacity-50' 
-                      : 'bg-white border-gray-300 text-gray-900 focus:border-gray-900 disabled:opacity-50'
-                  } focus:outline-none focus:ring-2 focus:ring-gray-900 focus:ring-opacity-20`}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white text-gray-900 focus:border-gray-900 focus:ring-2 focus:ring-gray-900 focus:ring-opacity-10 transition-all duration-200 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Selecione uma empresa</option>
                   {companies.map((company) => (
@@ -1215,7 +1302,8 @@ export default function Dashboard() {
                   ))}
                 </select>
                 {isFetchingCompanies && (
-                  <p className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                  <p className="text-xs mt-2 text-gray-500 font-medium flex items-center gap-1.5">
+                    <FiRefreshCw className="animate-spin" size={12} />
                     Carregando empresas...
                   </p>
                 )}
@@ -1230,140 +1318,215 @@ export default function Dashboard() {
       {budgetsFilters.companyId && (() => {
         const selectedCompany = companies.find(c => (c.id || c._id) === budgetsFilters.companyId);
         return selectedCompany ? (
-          <div className={`rounded-xl shadow-lg p-6 transition-colors ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
-            <h3 className={`text-lg font-semibold mb-4 ${darkMode ? 'text-gray-200' : 'text-gray-700'}`}>
-              Informações da Empresa
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Informações Básicas */}
-              <div className="space-y-4">
-                <div>
-                  <label className={`text-sm font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Nome
-                  </label>
-                  <p className={`mt-1 ${darkMode ? 'text-gray-200' : 'text-gray-900'}`}>
-                    {selectedCompany.name || 'N/A'}
-                  </p>
+          <div className="rounded-2xl shadow-xl bg-white border border-gray-100 overflow-hidden">
+            {/* Header */}
+            <div className="px-8 py-6 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 rounded-xl bg-gradient-to-br from-gray-100 to-gray-50 border border-gray-200">
+                    <FiBriefcase className="text-gray-700" size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-bold text-gray-900 tracking-tight">
+                      Informações da Empresa
+                    </h3>
+                    <p className="text-sm text-gray-500 font-medium mt-1">
+                      Dados cadastrais e informações de contato
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <label className={`text-sm font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Razão Social
-                  </label>
-                  <p className={`mt-1 ${darkMode ? 'text-gray-200' : 'text-gray-900'}`}>
-                    {selectedCompany.legalName || 'N/A'}
-                  </p>
-                </div>
-                <div>
-                  <label className={`text-sm font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    CNPJ / Registro
-                  </label>
-                  <p className={`mt-1 ${darkMode ? 'text-gray-200' : 'text-gray-900'}`}>
-                    {selectedCompany.registrationNumber || 'N/A'}
-                  </p>
-                </div>
-                <div>
-                  <label className={`text-sm font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Status
-                  </label>
-                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium mt-1 ${
+                {selectedCompany.active !== undefined && (
+                  <span className={`inline-flex items-center px-4 py-2 rounded-xl text-sm font-semibold ${
                     selectedCompany.active 
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-gray-100 text-gray-800'
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                      : 'bg-gray-100 text-gray-700 border border-gray-200'
                   }`}>
                     {selectedCompany.active ? 'Ativa' : 'Inativa'}
                   </span>
-                </div>
+                )}
               </div>
+            </div>
 
-              {/* Endereço */}
-              {selectedCompany.address && (
-                <div className="space-y-4">
-                  <div>
-                    <label className={`text-sm font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                      Endereço
-                    </label>
-                    <div className={`mt-1 space-y-1 ${darkMode ? 'text-gray-200' : 'text-gray-900'}`}>
-                      {selectedCompany.address.street && (
-                        <p>
-                          {selectedCompany.address.street}
-                          {selectedCompany.address.number && `, ${selectedCompany.address.number}`}
-                          {selectedCompany.address.complement && Object.keys(selectedCompany.address.complement).length > 0 && 
-                            ` - ${Object.values(selectedCompany.address.complement).join(', ')}`
-                          }
-                        </p>
-                      )}
-                      {selectedCompany.address.district && (
-                        <p>{selectedCompany.address.district}</p>
-                      )}
-                      <p>
-                        {selectedCompany.address.city && `${selectedCompany.address.city}`}
-                        {selectedCompany.address.state && `, ${selectedCompany.address.state}`}
-                        {selectedCompany.address.zipCode && ` - ${selectedCompany.address.zipCode}`}
+            {/* Conteúdo */}
+            <div className="p-8">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Coluna Esquerda - Informações Básicas */}
+                <div className="space-y-6">
+                  {/* Nome */}
+                  <div className="p-5 rounded-xl bg-gray-50 border border-gray-100">
+                    <div className="flex items-center gap-2 mb-3">
+                      <FiBriefcase className="text-gray-400" size={16} />
+                      <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                        Nome
+                      </label>
+                    </div>
+                    <p className="text-base font-semibold text-gray-900 leading-relaxed">
+                      {selectedCompany.name || 'N/A'}
+                    </p>
+                  </div>
+
+                  {/* Razão Social */}
+                  <div className="p-5 rounded-xl bg-gray-50 border border-gray-100">
+                    <div className="flex items-center gap-2 mb-3">
+                      <FiFileText className="text-gray-400" size={16} />
+                      <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                        Razão Social
+                      </label>
+                    </div>
+                    <p className="text-base font-semibold text-gray-900 leading-relaxed">
+                      {selectedCompany.legalName || 'N/A'}
+                    </p>
+                  </div>
+
+                  {/* CNPJ */}
+                  <div className="p-5 rounded-xl bg-gray-50 border border-gray-100">
+                    <div className="flex items-center gap-2 mb-3">
+                      <FiFileText className="text-gray-400" size={16} />
+                      <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                        CNPJ / Registro
+                      </label>
+                    </div>
+                    <p className="text-lg font-bold text-gray-900 font-mono">
+                      {selectedCompany.registrationNumber || 'N/A'}
+                    </p>
+                  </div>
+
+                  {/* Email Corporativo */}
+                  {selectedCompany.corporateEmail && (
+                    <div className="p-5 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="flex items-center gap-2 mb-3">
+                        <FiMail className="text-gray-400" size={16} />
+                        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                          Email Corporativo
+                        </label>
+                      </div>
+                      <p className="text-base font-medium text-gray-900">
+                        {selectedCompany.corporateEmail}
                       </p>
                     </div>
-                  </div>
-                </div>
-              )}
+                  )}
 
-              {/* Logo (se existir) */}
-              {selectedCompany.logo && (
-                <div className="md:col-span-2">
-                  <label className={`text-sm font-medium ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Logo
-                  </label>
-                  <div className="mt-2">
-                    <img 
-                      src={selectedCompany.logo} 
-                      alt={selectedCompany.name || 'Logo da empresa'} 
-                      className="max-h-32 max-w-32 object-contain"
-                      onError={(e) => {
-                        e.target.style.display = 'none';
-                      }}
-                    />
-                  </div>
+                  {/* Email */}
+                  {selectedCompany.email && (
+                    <div className="p-5 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="flex items-center gap-2 mb-3">
+                        <FiMail className="text-gray-400" size={16} />
+                        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                          Email
+                        </label>
+                      </div>
+                      <p className="text-base font-medium text-gray-900">
+                        {selectedCompany.email}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Telefone */}
+                  {selectedCompany.phoneNumber && (
+                    <div className="p-5 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="flex items-center gap-2 mb-3">
+                        <FiPhone className="text-gray-400" size={16} />
+                        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                          Telefone
+                        </label>
+                      </div>
+                      <p className="text-base font-medium text-gray-900">
+                        {selectedCompany.phoneNumber}
+                      </p>
+                    </div>
+                  )}
                 </div>
-              )}
+
+                {/* Coluna Direita - Endereço */}
+                {selectedCompany.address && (
+                  <div className="space-y-6">
+                    <div className="p-5 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="flex items-center gap-2 mb-4">
+                        <FiMapPin className="text-gray-400" size={16} />
+                        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                          Endereço
+                        </label>
+                      </div>
+                      <div className="space-y-2 text-base text-gray-900">
+                        {selectedCompany.address.street && (
+                          <p className="font-semibold">
+                            {selectedCompany.address.street}
+                            {selectedCompany.address.number && `, ${selectedCompany.address.number}`}
+                            {selectedCompany.address.complement && Object.keys(selectedCompany.address.complement).length > 0 && 
+                              ` - ${Object.values(selectedCompany.address.complement).join(', ')}`
+                            }
+                          </p>
+                        )}
+                        {selectedCompany.address.district && (
+                          <p className="font-medium text-gray-700">
+                            {selectedCompany.address.district}
+                          </p>
+                        )}
+                        <p className="font-medium text-gray-700">
+                          {selectedCompany.address.city && `${selectedCompany.address.city}`}
+                          {selectedCompany.address.state && `, ${selectedCompany.address.state}`}
+                          {selectedCompany.address.zipCode && ` - ${selectedCompany.address.zipCode}`}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Logo */}
+                    {selectedCompany.logo && (
+                      <div className="p-5 rounded-xl bg-gray-50 border border-gray-100">
+                        <div className="flex items-center gap-2 mb-4">
+                          <FiFileText className="text-gray-400" size={16} />
+                          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                            Logo
+                          </label>
+                        </div>
+                        <div className="mt-2 p-4 bg-white rounded-lg border border-gray-200 inline-block">
+                          <img 
+                            src={selectedCompany.logo} 
+                            alt={selectedCompany.name || 'Logo da empresa'} 
+                            className="max-h-24 max-w-48 object-contain"
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         ) : null;
       })()}
 
       {/* Lista de Verbas Agrupadas por Funcionário */}
-      <div className={`rounded-xl shadow-lg overflow-hidden transition-colors ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
-        <div className={`p-6 border-b ${darkMode ? 'border-gray-700 bg-gray-800' : 'border-gray-200 bg-gray-50'}`}>
-          <div className="flex justify-between items-center flex-wrap gap-4">
+      <div className="rounded-2xl shadow-xl overflow-hidden bg-white border border-gray-100">
+        <div className="px-8 py-6 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white">
+          <div className="flex justify-between items-center flex-wrap gap-6">
             <div>
-              <h3 className={`text-xl font-bold ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>
+              <h3 className="text-2xl font-bold text-gray-900 tracking-tight">
                 Verbas por Funcionário
               </h3>
-              <p className={`text-sm mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+              <p className="text-sm mt-2 text-gray-500 font-medium">
                 {budgetsPagination.total} {budgetsPagination.total === 1 ? 'funcionário encontrado' : 'funcionários encontrados'} • Página {budgetsPagination.page} de {budgetsPagination.totalPages}
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               <button 
                 onClick={() => changePage(budgetsPagination.page - 1, 'budgets')} 
                 disabled={budgetsPagination.page === 1}
-                className={`p-2 rounded-lg transition-all ${
-                  darkMode 
-                    ? 'bg-gray-700 text-gray-300 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed' 
-                    : 'bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed border border-gray-300'
-                }`}
+                className="p-2.5 rounded-xl transition-all duration-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed border border-gray-200 hover:border-gray-300 hover:shadow-sm disabled:hover:shadow-none"
               >
                 <FiChevronLeft size={18} />
               </button>
-              <span className={`px-4 py-2 rounded-lg font-medium ${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-white text-gray-700 border border-gray-300'}`}>
+              <span className="px-5 py-2.5 rounded-xl font-semibold text-sm bg-white text-gray-700 border border-gray-200">
                 {budgetsPagination.page} / {budgetsPagination.totalPages}
               </span>
               <button 
                 onClick={() => changePage(budgetsPagination.page + 1, 'budgets')} 
                 disabled={budgetsPagination.page === budgetsPagination.totalPages}
-                className={`p-2 rounded-lg transition-all ${
-                  darkMode 
-                    ? 'bg-gray-700 text-gray-300 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed' 
-                    : 'bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed border border-gray-300'
-                }`}
+                className="p-2.5 rounded-xl transition-all duration-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed border border-gray-200 hover:border-gray-300 hover:shadow-sm disabled:hover:shadow-none"
               >
                 <FiChevronRight size={18} />
               </button>
@@ -1371,216 +1534,127 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="p-6">
+        <div className="p-8 bg-gray-50/50">
           {budgets.length > 0 ? (
-            <div className="space-y-4">
+            <div className="space-y-5">
               {budgets.map((funcionario, idx) => {
                 const totalEvents = funcionario.events?.length || 0;
-                const totalValue = funcionario.events?.reduce((sum, e) => {
-                  const val = parseFloat(e.decimal || e.value || 0);
-                  return sum + (isNaN(val) ? 0 : val);
-                }, 0) || 0;
                 const employeeId = funcionario.employeeId || idx;
                 const isExpanded = expandedBudgets.includes(employeeId);
 
                 return (
                   <div 
                     key={employeeId} 
-                    className={`rounded-xl border-2 transition-all duration-300 overflow-hidden ${
+                    className={`rounded-2xl border transition-all duration-300 overflow-hidden bg-white ${
                       isExpanded
-                        ? 'border-orange-400 shadow-lg'
-                        : darkMode 
-                          ? 'bg-gray-800 border-gray-700 hover:border-gray-600 hover:shadow-lg' 
-                          : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-lg'
+                        ? 'border-gray-300 shadow-xl'
+                        : 'border-gray-200 hover:border-gray-300 hover:shadow-lg shadow-sm'
                     }`}
                   >
                     {/* Header do Funcionário - Clicável */}
                     <button
                       onClick={() => toggleBudgetExpansion(employeeId)}
-                      className={`w-full p-5 transition-all duration-200 ${
-                        darkMode 
-                          ? 'bg-gray-800 hover:bg-gray-750' 
-                          : 'bg-white hover:bg-gray-50'
-                      }`}
+                      className="w-full px-6 py-5 transition-all duration-200 bg-white hover:bg-gray-50/80 active:bg-gray-100"
                     >
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-4 flex-1 text-left">
-                          <div className={`p-3 rounded-lg transition-colors ${
-                            darkMode 
-                              ? 'bg-gray-700' 
-                              : 'bg-gray-100'
-                          }`}>
-                            <FiUser className={darkMode ? 'text-gray-300' : 'text-gray-600'} size={24} />
+                      <div className="flex items-center justify-between gap-6">
+                        <div className="flex items-center gap-5 flex-1 text-left min-w-0">
+                          <div className="flex-shrink-0 p-3.5 rounded-xl bg-gradient-to-br from-gray-100 to-gray-50 border border-gray-200">
+                            <FiUser className="text-gray-700" size={22} />
                           </div>
-                          <div className="flex-1">
-                            <h4 className={`text-lg font-bold mb-2 ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>
-                              Funcionário
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-lg font-bold text-gray-900 mb-1.5 truncate">
+                              {funcionario.employeeName || funcionario.externalId || 'Funcionário'}
                             </h4>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className={`text-xs font-medium px-3 py-1 rounded ${
-                                darkMode 
-                                  ? 'bg-gray-700 text-gray-300' 
-                                  : 'bg-gray-200 text-gray-700'
-                              }`}>
-                                ID: {funcionario.employeeId || 'N/A'}
-                              </span>
-                              {funcionario.externalId && (
-                                <span className={`text-xs font-medium px-3 py-1 rounded ${
-                                  darkMode 
-                                    ? 'bg-gray-700 text-gray-300' 
-                                    : 'bg-gray-200 text-gray-700'
-                                }`}>
-                                  Registro: {funcionario.externalId}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <div className={`text-right ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>
-                            <div className="text-2xl font-bold">
-                              {totalEvents}
-                            </div>
-                            <div className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                              {totalEvents === 1 ? 'evento' : 'eventos'}
-                            </div>
-                            {totalValue !== 0 && (
-                              <div className="text-sm font-semibold mt-1">
-                                {new Intl.NumberFormat('pt-BR', {
-                                  style: 'currency',
-                                  currency: 'BRL',
-                                  minimumFractionDigits: 2
-                                }).format(totalValue)}
+                            {funcionario.externalId && (
+                              <div className="text-sm text-gray-500 font-medium">
+                                Matrícula: <span className="font-semibold text-gray-700">{funcionario.externalId}</span>
                               </div>
                             )}
                           </div>
-                          <div className={`transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}>
-                            <FiChevronDown className={isExpanded ? 'text-orange-500' : (darkMode ? 'text-gray-300' : 'text-gray-600')} size={24} />
+                        </div>
+                        <div className="flex items-center gap-6 flex-shrink-0">
+                          <div className="text-right">
+                            <div className="text-3xl font-bold text-gray-900 leading-none">
+                              {totalEvents}
+                            </div>
+                            <div className="text-xs font-medium text-gray-500 mt-1.5 uppercase tracking-wide">
+                              {totalEvents === 1 ? 'evento' : 'eventos'}
+                            </div>
+                          </div>
+                          <div className={`transition-transform duration-300 flex-shrink-0 ${isExpanded ? 'rotate-180' : ''}`}>
+                            <FiChevronDown className="text-gray-400" size={22} />
                           </div>
                         </div>
                       </div>
                     </button>
 
                     {/* Conteúdo do Accordion */}
-                    <div className={`transition-all duration-300 ease-in-out ${
+                    <div className={`transition-all duration-500 ease-out ${
                       isExpanded ? 'max-h-[5000px] opacity-100' : 'max-h-0 opacity-0 overflow-hidden'
                     }`}>
-                      <div className="p-5 bg-white">
+                      <div className="px-6 py-6 bg-gradient-to-b from-white to-gray-50/30">
                         {funcionario.events && funcionario.events.length > 0 ? (
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                             {funcionario.events.map((event, eventIdx) => {
-                              const eventValue = parseFloat(event.decimal || event.value || 0);
-                              const isPositive = eventValue >= 0;
-                              
                               return (
                                 <div
                                   key={eventIdx}
-                                  className="rounded-lg border border-gray-200 p-4 bg-white transition-all duration-200 hover:shadow-md hover:border-gray-300"
+                                  className="group rounded-xl border border-gray-200 p-5 bg-white transition-all duration-300 hover:shadow-lg hover:border-gray-300 hover:-translate-y-0.5"
                                 >
-                                  {/* Header do Evento */}
-                                  <div className="flex items-start justify-between mb-3">
-                                    <div className="flex-1">
-                                      <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                        <span className="text-xs font-bold px-3 py-1 rounded bg-[#1E3A8A] text-white">
-                                          {event.eventCode || 'N/A'}
+                                  {/* Header do Evento - Nome da Verba Destacado */}
+                                  <div className="mb-5">
+                                    <h5 className="text-base font-bold text-gray-900 mb-3 leading-snug line-clamp-2">
+                                      {event.description || 'Verba sem descrição'}
+                                    </h5>
+                                    {event.type && (
+                                      <span className={`inline-flex items-center text-xs px-3 py-1.5 rounded-lg font-semibold tracking-wide ${
+                                        event.type.toLowerCase().includes('credit') || event.type.toLowerCase().includes('provento')
+                                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                          : 'bg-rose-50 text-rose-700 border border-rose-200'
+                                      }`}>
+                                        {event.type}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Detalhes do Evento */}
+                                  <div className="space-y-3.5 pt-4 border-t border-gray-100">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-sm font-medium text-gray-600 flex items-center gap-2">
+                                        <FiCalendar size={14} className="text-gray-400" />
+                                        Data
+                                      </span>
+                                      <span className="text-sm font-semibold text-gray-900">
+                                        {event.date ? new Date(event.date).toLocaleDateString('pt-BR', {
+                                          day: '2-digit',
+                                          month: '2-digit',
+                                          year: 'numeric'
+                                        }) : 'N/A'}
+                                      </span>
+                                    </div>
+
+                                    {event.hm && (
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-sm font-medium text-gray-600 flex items-center gap-2">
+                                          <FiClock size={14} className="text-gray-400" />
+                                          Horas
                                         </span>
-                                        {event.type && (
-                                          <span className={`text-xs px-3 py-1 rounded font-medium ${
-                                            event.type.toLowerCase().includes('credit') || event.type.toLowerCase().includes('provento')
-                                              ? 'bg-green-100 text-green-800 border border-green-300'
-                                              : 'bg-red-100 text-red-800 border border-red-300'
-                                          }`}>
-                                            {event.type}
-                                          </span>
-                                        )}
+                                        <span className="text-sm font-semibold text-gray-900">
+                                          {event.hm}
+                                        </span>
                                       </div>
-                                      <h5 className="font-semibold text-sm text-gray-900">
-                                        {event.description || 'Sem descrição'}
-                                      </h5>
-                                    </div>
+                                    )}
                                   </div>
-
-                                {/* Detalhes do Evento */}
-                                <div className="space-y-2 mt-4">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-xs text-gray-600">
-                                      <FiCalendar size={12} className="inline mr-1" />
-                                      Data
-                                    </span>
-                                    <span className="text-xs font-medium text-gray-700">
-                                      {event.date ? new Date(event.date).toLocaleDateString('pt-BR') : 'N/A'}
-                                    </span>
-                                  </div>
-
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-xs text-gray-600">
-                                      <FiDollarSign size={12} className="inline mr-1 text-orange-500" />
-                                      Valor
-                                    </span>
-                                    <span className={`text-sm font-bold ${
-                                      isPositive 
-                                        ? 'text-green-600'
-                                        : 'text-red-600'
-                                    }`}>
-                                      {!isNaN(eventValue) ? new Intl.NumberFormat('pt-BR', {
-                                        style: 'currency',
-                                        currency: 'BRL'
-                                      }).format(eventValue) : (event.value || '0.00')}
-                                    </span>
-                                  </div>
-
-                                  {event.hm && (
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-xs text-gray-600">
-                                        <FiClock size={12} className="inline mr-1" />
-                                        Horas
-                                      </span>
-                                      <span className="text-xs font-medium text-gray-700">
-                                        {event.hm}
-                                      </span>
-                                    </div>
-                                  )}
-
-                                  {event.decimal !== null && event.decimal !== undefined && event.decimal !== eventValue && (
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-xs text-gray-600">
-                                        Decimal
-                                      </span>
-                                      <span className="text-xs font-medium text-gray-700">
-                                        {event.decimal}
-                                      </span>
-                                    </div>
-                                  )}
                                 </div>
-                              </div>
-                            );
-                          })}
+                              );
+                            })}
                           </div>
                         ) : (
-                          <div className={`text-center py-8 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                            <FiFileText size={32} className="mx-auto mb-2 opacity-50" />
-                            <p className="text-sm">Nenhum evento encontrado para este funcionário.</p>
-                          </div>
-                        )}
-
-                        {/* Footer com Total */}
-                        {totalValue !== 0 && (
-                          <div className="mt-6 px-5 py-3 border-t border-gray-200 bg-gray-50">
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm font-medium text-gray-600">
-                                Total de Verbas:
-                              </span>
-                              <span className={`text-lg font-bold ${
-                                totalValue >= 0 
-                                  ? 'text-green-600'
-                                  : 'text-red-600'
-                              }`}>
-                                {new Intl.NumberFormat('pt-BR', {
-                                  style: 'currency',
-                                  currency: 'BRL'
-                                }).format(totalValue)}
-                              </span>
+                          <div className="text-center py-12">
+                            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-100 mb-4">
+                              <FiFileText size={24} className="text-gray-400" />
                             </div>
+                            <p className="text-sm font-medium text-gray-500">Nenhum evento encontrado para este funcionário.</p>
                           </div>
                         )}
                       </div>
@@ -1590,31 +1664,33 @@ export default function Dashboard() {
               })}
             </div>
           ) : (
-            <div className="py-16 text-center">
+            <div className="py-20 text-center">
               {isFetchingBudgets ? (
                 <div className="flex flex-col items-center justify-center">
-                  <FiRefreshCw className={`animate-spin text-4xl mb-4 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`} />
-                  <p className={`text-lg font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                  <div className="relative">
+                    <div className="w-16 h-16 border-4 border-gray-200 border-t-gray-900 rounded-full animate-spin mb-6"></div>
+                  </div>
+                  <p className="text-lg font-semibold text-gray-900 mb-2">
                     Buscando verbas...
                   </p>
-                  <p className={`text-sm mt-2 ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>
+                  <p className="text-sm text-gray-500 font-medium">
                     Aguarde enquanto carregamos os dados
                   </p>
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center">
-                  <div className={`p-4 rounded-full mb-4 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
-                    <FiDollarSign className={`text-4xl ${darkMode ? 'text-gray-400' : 'text-gray-400'}`} />
+                  <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-100 to-gray-50 border border-gray-200 mb-6">
+                    <FiDollarSign className="text-3xl text-gray-400" />
                   </div>
-                  <p className={`text-lg font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                  <p className="text-xl font-bold text-gray-900 mb-2">
                     Nenhuma verba encontrada
                   </p>
-                  <p className={`text-sm mt-2 ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>
+                  <p className="text-sm text-gray-500 font-medium mb-8 max-w-md">
                     Selecione uma empresa e período para buscar verbas
                   </p>
                   <button 
                     onClick={fetchBudgets}
-                    className="mt-6 px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-all font-medium shadow-md hover:shadow-lg"
+                    className="px-8 py-3.5 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-all duration-200 font-semibold shadow-lg hover:shadow-xl hover:scale-105 active:scale-100"
                   >
                     Buscar Novamente
                   </button>
