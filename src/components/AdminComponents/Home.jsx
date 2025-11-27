@@ -6,7 +6,8 @@ import {
   FiUsers, FiSend, FiLogOut, FiChevronLeft, FiChevronRight, 
   FiRefreshCw, FiSearch, FiClock, FiDollarSign, FiFilter,
   FiCalendar, FiUser, FiBriefcase, FiSettings, FiEye, FiEyeOff,
-  FiChevronDown, FiChevronUp, FiPhone, FiMail, FiMapPin, FiFileText
+  FiChevronDown, FiChevronUp, FiPhone, FiMail, FiMapPin, FiFileText,
+  FiCheck, FiX, FiAlertCircle, FiCheckCircle
 } from 'react-icons/fi';
 import { signOut } from 'next-auth/react';
 
@@ -39,6 +40,23 @@ export default function Dashboard() {
   
   // Estado para acordeão de Informações da Empresa
   const [isCompanyInfoExpanded, setIsCompanyInfoExpanded] = useState(false);
+  
+  // Estados para envio de movimentos para AlterData
+  const [isSendingMovimentos, setIsSendingMovimentos] = useState(false);
+  const [sendingMovimentoFuncionario, setSendingMovimentoFuncionario] = useState(null);
+  
+  // Estado para rastrear envios de funcionários (histórico)
+  const [enviadosStatus, setEnviadosStatus] = useState({}); // { employeeId: { status: 'success'|'error', timestamp: Date, details: {...} } }
+  
+  // Estados para empresas da AlterData
+  const [alterDataEmpresas, setAlterDataEmpresas] = useState([]);
+  const [isLoadingAlterDataEmpresas, setIsLoadingAlterDataEmpresas] = useState(false);
+  const [showAlterDataEmpresas, setShowAlterDataEmpresas] = useState(false);
+  
+  // Estados para funcionários da AlterData
+  const [alterDataFuncionarios, setAlterDataFuncionarios] = useState({}); // { empresaId: [funcionarios] }
+  const [loadingFuncionarios, setLoadingFuncionarios] = useState({}); // { empresaId: true/false }
+  const [expandedEmpresaFuncionarios, setExpandedEmpresaFuncionarios] = useState(new Set()); // IDs das empresas com funcionários expandidos
 
   // Filtros
   const [filters, setFilters] = useState({
@@ -394,6 +412,270 @@ export default function Dashboard() {
       if (newPage >= 1 && newPage <= budgetsPagination.totalPages) {
         setBudgetsFilters(p => ({ ...p, page: newPage }));
       }
+    }
+  };
+
+  // Função para buscar empresas da AlterData
+  const fetchAlterDataEmpresas = async () => {
+    setIsLoadingAlterDataEmpresas(true);
+    setShowAlterDataEmpresas(true);
+    
+    try {
+      const response = await fetch('/api/alterdata/empresas?ativa=true&limit=100');
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro ao buscar empresas da AlterData');
+      }
+      
+      setAlterDataEmpresas(data.empresas || []);
+      // Limpar funcionários ao buscar novas empresas
+      setAlterDataFuncionarios({});
+      setExpandedEmpresaFuncionarios(new Set());
+    } catch (error) {
+      console.error('Erro ao buscar empresas da AlterData:', error);
+      alert(`Erro ao buscar empresas: ${error.message}`);
+      setAlterDataEmpresas([]);
+    } finally {
+      setIsLoadingAlterDataEmpresas(false);
+    }
+  };
+
+  // Função para buscar funcionários de uma empresa
+  const fetchFuncionariosEmpresa = async (empresaId) => {
+    // Se já está carregando ou já tem os dados, não buscar novamente
+    if (loadingFuncionarios[empresaId] || alterDataFuncionarios[empresaId]) {
+      // Apenas expandir/colapsar
+      const newExpanded = new Set(expandedEmpresaFuncionarios);
+      if (newExpanded.has(empresaId)) {
+        newExpanded.delete(empresaId);
+      } else {
+        newExpanded.add(empresaId);
+      }
+      setExpandedEmpresaFuncionarios(newExpanded);
+      return;
+    }
+    
+    setLoadingFuncionarios(prev => ({ ...prev, [empresaId]: true }));
+    
+    try {
+      const response = await fetch(`/api/alterdata/funcionarios?empresaId=${empresaId}`);
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro ao buscar funcionários da AlterData');
+      }
+      
+      setAlterDataFuncionarios(prev => ({
+        ...prev,
+        [empresaId]: data.funcionarios || []
+      }));
+      
+      // Expandir a seção de funcionários
+      const newExpanded = new Set(expandedEmpresaFuncionarios);
+      newExpanded.add(empresaId);
+      setExpandedEmpresaFuncionarios(newExpanded);
+    } catch (error) {
+      console.error('Erro ao buscar funcionários:', error);
+      alert(`Erro ao buscar funcionários: ${error.message}`);
+    } finally {
+      setLoadingFuncionarios(prev => ({ ...prev, [empresaId]: false }));
+    }
+  };
+
+  // Função para enviar movimentos de um funcionário individual
+  const sendMovimentoIndividual = async (funcionario) => {
+    if (!funcionario.events || funcionario.events.length === 0) {
+      alert('Este funcionário não possui eventos para enviar.');
+      return;
+    }
+
+    if (!budgetsFilters.companyId || !budgetsFilters.year || !budgetsFilters.month) {
+      alert('Por favor, selecione empresa, ano e mês antes de enviar.');
+      return;
+    }
+
+    const employeeId = funcionario.employeeId;
+    setSendingMovimentoFuncionario(employeeId);
+
+    // Limpar status anterior
+    setEnviadosStatus(prev => {
+      const newStatus = { ...prev };
+      delete newStatus[employeeId];
+      return newStatus;
+    });
+
+    try {
+      const movimentos = funcionario.events.map(event => ({
+        event,
+        funcionario
+      }));
+
+      const response = await fetch('/api/alterdata/movimentos', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          movimentos,
+          empresaId: budgetsFilters.companyId,
+          year: budgetsFilters.year,
+          month: budgetsFilters.month
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro ao enviar movimentos');
+      }
+
+      const timestamp = new Date();
+      
+      if (data.errorCount > 0) {
+        // Parcialmente enviado
+        setEnviadosStatus(prev => ({
+          ...prev,
+          [employeeId]: {
+            status: 'partial',
+            timestamp,
+            successCount: data.successCount,
+            errorCount: data.errorCount,
+            total: data.total,
+            errors: data.errors || []
+          }
+        }));
+      } else {
+        // Totalmente enviado com sucesso
+        setEnviadosStatus(prev => ({
+          ...prev,
+          [employeeId]: {
+            status: 'success',
+            timestamp,
+            successCount: data.successCount,
+            total: data.total,
+            errors: []
+          }
+        }));
+      }
+    } catch (error) {
+      console.error('Erro ao enviar movimentos:', error);
+      const timestamp = new Date();
+      setEnviadosStatus(prev => ({
+        ...prev,
+        [employeeId]: {
+          status: 'error',
+          timestamp,
+          error: error.message
+        }
+      }));
+    } finally {
+      setSendingMovimentoFuncionario(null);
+    }
+  };
+
+  // Função para enviar movimentos de todos os funcionários da empresa
+  const sendMovimentosEmpresa = async () => {
+    if (allBudgets.length === 0) {
+      alert('Não há funcionários para enviar.');
+      return;
+    }
+
+    if (!budgetsFilters.companyId || !budgetsFilters.year || !budgetsFilters.month) {
+      alert('Por favor, selecione empresa, ano e mês antes de enviar.');
+      return;
+    }
+
+    const confirmar = confirm(
+      `Deseja enviar movimentos de TODOS os ${allBudgets.length} funcionários para o AlterData?`
+    );
+
+    if (!confirmar) return;
+
+    setIsSendingMovimentos(true);
+    const timestamp = new Date();
+
+    try {
+      // Preparar todos os movimentos de todos os funcionários
+      const movimentos = [];
+      allBudgets.forEach(funcionario => {
+        if (funcionario.events && funcionario.events.length > 0) {
+          funcionario.events.forEach(event => {
+            movimentos.push({
+              event,
+              funcionario
+            });
+          });
+        }
+      });
+
+      if (movimentos.length === 0) {
+        alert('Não há eventos para enviar.');
+        return;
+      }
+
+      const response = await fetch('/api/alterdata/movimentos', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          movimentos,
+          empresaId: budgetsFilters.companyId,
+          year: budgetsFilters.year,
+          month: budgetsFilters.month
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro ao enviar movimentos');
+      }
+
+      // Atualizar status de todos os funcionários processados
+      const funcionariosProcessados = new Set();
+      allBudgets.forEach(funcionario => {
+        if (funcionario.events && funcionario.events.length > 0) {
+          funcionariosProcessados.add(funcionario.employeeId);
+        }
+      });
+
+      setEnviadosStatus(prev => {
+        const newStatus = { ...prev };
+        funcionariosProcessados.forEach(empId => {
+          newStatus[empId] = {
+            status: data.errorCount > 0 ? 'partial' : 'success',
+            timestamp,
+            successCount: data.successCount,
+            errorCount: data.errorCount,
+            total: data.total
+          };
+        });
+        return newStatus;
+      });
+
+      if (data.errorCount > 0) {
+        console.error('Erros ao enviar:', data.errors);
+      }
+    } catch (error) {
+      console.error('Erro ao enviar movimentos:', error);
+      // Marcar todos como erro
+      setEnviadosStatus(prev => {
+        const newStatus = { ...prev };
+        allBudgets.forEach(funcionario => {
+          if (funcionario.events && funcionario.events.length > 0) {
+            newStatus[funcionario.employeeId] = {
+              status: 'error',
+              timestamp,
+              error: error.message
+            };
+          }
+        });
+        return newStatus;
+      });
+    } finally {
+      setIsSendingMovimentos(false);
     }
   };
 
@@ -1315,9 +1597,29 @@ export default function Dashboard() {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2.5">
-                  Empresa <span className="text-red-500">*</span>
-                </label>
+                <div className="flex items-center justify-between mb-2.5">
+                  <label className="block text-sm font-semibold text-gray-700">
+                    Empresa <span className="text-red-500">*</span>
+                  </label>
+                  <button
+                    onClick={fetchAlterDataEmpresas}
+                    disabled={isLoadingAlterDataEmpresas}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center gap-1.5"
+                    title="Ver empresas cadastradas na AlterData"
+                  >
+                    {isLoadingAlterDataEmpresas ? (
+                      <>
+                        <FiRefreshCw className="animate-spin" size={12} />
+                        Carregando...
+                      </>
+                    ) : (
+                      <>
+                        <FiBriefcase size={12} />
+                        Ver Empresas AlterData
+                      </>
+                    )}
+                  </button>
+                </div>
                 <select
                   name="companyId"
                   value={budgetsFilters.companyId}
@@ -1546,16 +1848,69 @@ export default function Dashboard() {
       <div className="rounded-2xl shadow-xl overflow-hidden bg-white border border-gray-100">
         <div className="px-8 py-6 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white">
           <div className="flex justify-between items-center flex-wrap gap-6">
-            <div>
+            <div className="flex-1">
               <h3 className="text-2xl font-bold text-gray-900 tracking-tight">
                 Verbas por Funcionário
               </h3>
-              <p className="text-sm mt-2 text-gray-500 font-medium">
-                {budgetsPagination.total} {budgetsPagination.total === 1 ? 'funcionário encontrado' : 'funcionários encontrados'} • Página {budgetsPagination.page} de {budgetsPagination.totalPages}
-              </p>
+              <div className="flex items-center gap-4 mt-2 flex-wrap">
+                <p className="text-sm text-gray-500 font-medium">
+                  {budgetsPagination.total} {budgetsPagination.total === 1 ? 'funcionário encontrado' : 'funcionários encontrados'} • Página {budgetsPagination.page} de {budgetsPagination.totalPages}
+                </p>
+                {Object.keys(enviadosStatus).length > 0 && (
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-semibold">
+                      <FiCheckCircle size={14} />
+                      {Object.values(enviadosStatus).filter(s => s.status === 'success').length} enviados
+                    </span>
+                    {Object.values(enviadosStatus).filter(s => s.status === 'error').length > 0 && (
+                      <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-50 text-red-700 font-semibold">
+                        <FiX size={14} />
+                        {Object.values(enviadosStatus).filter(s => s.status === 'error').length} erros
+                      </span>
+                    )}
+                    {Object.values(enviadosStatus).filter(s => s.status === 'partial').length > 0 && (
+                      <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 font-semibold">
+                        <FiAlertCircle size={14} />
+                        {Object.values(enviadosStatus).filter(s => s.status === 'partial').length} parciais
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center gap-3">
+              {Object.keys(enviadosStatus).length > 0 && (
+                <button
+                  onClick={() => {
+                    if (confirm('Deseja limpar o histórico de envios?')) {
+                      setEnviadosStatus({});
+                    }
+                  }}
+                  className="px-3 py-2 rounded-xl transition-all duration-200 bg-gray-100 text-gray-700 hover:bg-gray-200 font-medium text-xs flex items-center gap-2"
+                  title="Limpar histórico de envios"
+                >
+                  <FiX size={14} />
+                  Limpar
+                </button>
+              )}
+              <button
+                onClick={sendMovimentosEmpresa}
+                disabled={isSendingMovimentos || allBudgets.length === 0 || !budgetsFilters.companyId}
+                className="px-5 py-2.5 rounded-xl transition-all duration-200 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed font-semibold text-sm flex items-center gap-2 shadow-sm hover:shadow-md disabled:hover:shadow-sm"
+              >
+                {isSendingMovimentos ? (
+                  <>
+                    <FiRefreshCw className="animate-spin" size={16} />
+                    Enviando Todos...
+                  </>
+                ) : (
+                  <>
+                    <FiSend size={16} />
+                    Enviar Todos ({allBudgets.length})
+                  </>
+                )}
+              </button>
               <button 
                 onClick={() => changePage(budgetsPagination.page - 1, 'budgets')} 
                 disabled={budgetsPagination.page === 1}
@@ -1584,14 +1939,38 @@ export default function Dashboard() {
                 const totalEvents = funcionario.events?.length || 0;
                 const employeeId = funcionario.employeeId || idx;
                 const isExpanded = expandedBudgets.includes(employeeId);
+                const statusInfo = enviadosStatus[employeeId];
+                const isSending = sendingMovimentoFuncionario === employeeId;
+
+                // Determinar cor da borda baseado no status
+                const getBorderColor = () => {
+                  if (isSending) return 'border-blue-400';
+                  if (statusInfo?.status === 'success') return 'border-emerald-400';
+                  if (statusInfo?.status === 'error') return 'border-red-400';
+                  if (statusInfo?.status === 'partial') return 'border-amber-400';
+                  return 'border-gray-200';
+                };
+
+                // Formatar timestamp
+                const formatTimestamp = (date) => {
+                  if (!date) return '';
+                  const d = new Date(date);
+                  return d.toLocaleString('pt-BR', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  });
+                };
 
                 return (
                   <div 
                     key={employeeId} 
-                    className={`rounded-2xl border transition-all duration-300 overflow-hidden bg-white ${
+                    className={`rounded-2xl border-2 transition-all duration-300 overflow-hidden bg-white ${
                       isExpanded
-                        ? 'border-gray-300 shadow-xl'
-                        : 'border-gray-200 hover:border-gray-300 hover:shadow-lg shadow-sm'
+                        ? `${getBorderColor()} shadow-xl`
+                        : `${getBorderColor()} hover:shadow-lg shadow-sm`
                     }`}
                   >
                     {/* Header do Funcionário - Clicável */}
@@ -1601,21 +1980,72 @@ export default function Dashboard() {
                     >
                       <div className="flex items-center justify-between gap-6">
                         <div className="flex items-center gap-5 flex-1 text-left min-w-0">
-                          <div className="flex-shrink-0 p-3.5 rounded-xl bg-gradient-to-br from-gray-100 to-gray-50 border border-gray-200">
-                            <FiUser className="text-gray-700" size={22} />
+                          <div className={`flex-shrink-0 p-3.5 rounded-xl border-2 transition-colors ${
+                            isSending 
+                              ? 'bg-blue-50 border-blue-200'
+                              : statusInfo?.status === 'success'
+                              ? 'bg-emerald-50 border-emerald-200'
+                              : statusInfo?.status === 'error'
+                              ? 'bg-red-50 border-red-200'
+                              : statusInfo?.status === 'partial'
+                              ? 'bg-amber-50 border-amber-200'
+                              : 'bg-gradient-to-br from-gray-100 to-gray-50 border-gray-200'
+                          }`}>
+                            {isSending ? (
+                              <FiRefreshCw className="text-blue-600 animate-spin" size={22} />
+                            ) : statusInfo?.status === 'success' ? (
+                              <FiCheckCircle className="text-emerald-600" size={22} />
+                            ) : statusInfo?.status === 'error' ? (
+                              <FiX className="text-red-600" size={22} />
+                            ) : statusInfo?.status === 'partial' ? (
+                              <FiAlertCircle className="text-amber-600" size={22} />
+                            ) : (
+                              <FiUser className="text-gray-700" size={22} />
+                            )}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <h4 className="text-lg font-bold text-gray-900 mb-1.5 truncate">
-                              {funcionario.employeeName || funcionario.externalId || 'Funcionário'}
-                            </h4>
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <h4 className="text-lg font-bold text-gray-900 truncate">
+                                {funcionario.employeeName || funcionario.externalId || 'Funcionário'}
+                              </h4>
+                              {statusInfo && (
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold ${
+                                  statusInfo.status === 'success'
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : statusInfo.status === 'error'
+                                    ? 'bg-red-100 text-red-700'
+                                    : 'bg-amber-100 text-amber-700'
+                                }`}>
+                                  {statusInfo.status === 'success' && <FiCheckCircle size={12} />}
+                                  {statusInfo.status === 'error' && <FiX size={12} />}
+                                  {statusInfo.status === 'partial' && <FiAlertCircle size={12} />}
+                                  {statusInfo.status === 'success' ? 'Enviado' : statusInfo.status === 'error' ? 'Erro' : 'Parcial'}
+                                </span>
+                              )}
+                            </div>
                             {funcionario.externalId && (
                               <div className="text-sm text-gray-500 font-medium">
                                 Matrícula: <span className="font-semibold text-gray-700">{funcionario.externalId}</span>
                               </div>
                             )}
+                            {statusInfo?.timestamp && (
+                              <div className={`text-xs font-medium mt-1 ${
+                                statusInfo.status === 'success'
+                                  ? 'text-emerald-600'
+                                  : statusInfo.status === 'error'
+                                  ? 'text-red-600'
+                                  : 'text-amber-600'
+                              }`}>
+                                {statusInfo.status === 'success' && '✓ '}
+                                {statusInfo.status === 'error' && '✗ '}
+                                {statusInfo.status === 'partial' && '⚠ '}
+                                Enviado em {formatTimestamp(statusInfo.timestamp)}
+                                {statusInfo.status === 'partial' && ` (${statusInfo.successCount}/${statusInfo.total} sucessos)`}
+                              </div>
+                            )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-6 flex-shrink-0">
+                        <div className="flex items-center gap-4 flex-shrink-0">
                           <div className="text-right">
                             <div className="text-3xl font-bold text-gray-900 leading-none">
                               {totalEvents}
@@ -1624,6 +2054,42 @@ export default function Dashboard() {
                               {totalEvents === 1 ? 'evento' : 'eventos'}
                             </div>
                           </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              sendMovimentoIndividual(funcionario);
+                            }}
+                            disabled={isSending || isSendingMovimentos || totalEvents === 0}
+                            className={`px-4 py-2 rounded-lg transition-all duration-200 font-semibold text-xs flex items-center gap-2 shadow-sm hover:shadow-md disabled:hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                              statusInfo?.status === 'success'
+                                ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                : statusInfo?.status === 'error'
+                                ? 'bg-red-600 text-white hover:bg-red-700'
+                                : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                            }`}
+                            title={
+                              statusInfo?.status === 'success'
+                                ? 'Reenviar movimentos deste funcionário'
+                                : 'Enviar movimentos deste funcionário para AlterData'
+                            }
+                          >
+                            {isSending ? (
+                              <>
+                                <FiRefreshCw className="animate-spin" size={14} />
+                                Enviando...
+                              </>
+                            ) : statusInfo?.status === 'success' ? (
+                              <>
+                                <FiSend size={14} />
+                                Reenviar
+                              </>
+                            ) : (
+                              <>
+                                <FiSend size={14} />
+                                Enviar
+                              </>
+                            )}
+                          </button>
                           <div className={`transition-transform duration-300 flex-shrink-0 ${isExpanded ? 'rotate-180' : ''}`}>
                             <FiChevronDown className="text-gray-400" size={22} />
                           </div>
@@ -1636,6 +2102,79 @@ export default function Dashboard() {
                       isExpanded ? 'max-h-[5000px] opacity-100' : 'max-h-0 opacity-0 overflow-hidden'
                     }`}>
                       <div className="px-6 py-6 bg-gradient-to-b from-white to-gray-50/30">
+                        {/* Banner de Status do Envio */}
+                        {statusInfo && (
+                          <div className={`mb-6 p-4 rounded-xl border-2 ${
+                            statusInfo.status === 'success'
+                              ? 'bg-emerald-50 border-emerald-200'
+                              : statusInfo.status === 'error'
+                              ? 'bg-red-50 border-red-200'
+                              : 'bg-amber-50 border-amber-200'
+                          }`}>
+                            <div className="flex items-start gap-3">
+                              <div className={`flex-shrink-0 mt-0.5 ${
+                                statusInfo.status === 'success'
+                                  ? 'text-emerald-600'
+                                  : statusInfo.status === 'error'
+                                  ? 'text-red-600'
+                                  : 'text-amber-600'
+                              }`}>
+                                {statusInfo.status === 'success' && <FiCheckCircle size={20} />}
+                                {statusInfo.status === 'error' && <FiX size={20} />}
+                                {statusInfo.status === 'partial' && <FiAlertCircle size={20} />}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <h5 className={`font-bold text-sm mb-1 ${
+                                  statusInfo.status === 'success'
+                                    ? 'text-emerald-900'
+                                    : statusInfo.status === 'error'
+                                    ? 'text-red-900'
+                                    : 'text-amber-900'
+                                }`}>
+                                  {statusInfo.status === 'success' && '✓ Movimentos enviados com sucesso!'}
+                                  {statusInfo.status === 'error' && '✗ Erro ao enviar movimentos'}
+                                  {statusInfo.status === 'partial' && '⚠ Envio parcialmente concluído'}
+                                </h5>
+                                <div className={`text-xs font-medium space-y-1 ${
+                                  statusInfo.status === 'success'
+                                    ? 'text-emerald-700'
+                                    : statusInfo.status === 'error'
+                                    ? 'text-red-700'
+                                    : 'text-amber-700'
+                                }`}>
+                                  <p>
+                                    Enviado em {formatTimestamp(statusInfo.timestamp)}
+                                  </p>
+                                  {statusInfo.status === 'success' && statusInfo.successCount && (
+                                    <p>{statusInfo.successCount} movimento(s) processado(s) com sucesso</p>
+                                  )}
+                                  {statusInfo.status === 'partial' && (
+                                    <div>
+                                      <p>✅ {statusInfo.successCount} movimento(s) enviado(s) com sucesso</p>
+                                      <p>❌ {statusInfo.errorCount} movimento(s) com erro</p>
+                                      {statusInfo.errors && statusInfo.errors.length > 0 && (
+                                        <details className="mt-2">
+                                          <summary className="cursor-pointer font-semibold">Ver detalhes dos erros</summary>
+                                          <ul className="mt-2 ml-4 space-y-1 list-disc">
+                                            {statusInfo.errors.map((err, idx) => (
+                                              <li key={idx} className="text-xs">
+                                                {err.description || err.eventCode}: {err.error}
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </details>
+                                      )}
+                                    </div>
+                                  )}
+                                  {statusInfo.status === 'error' && statusInfo.error && (
+                                    <p className="font-semibold">Erro: {statusInfo.error}</p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        
                         {funcionario.events && funcionario.events.length > 0 ? (
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                             {funcionario.events.map((event, eventIdx) => {
@@ -1880,6 +2419,216 @@ export default function Dashboard() {
         {/* Attendance temporariamente desativado */}
         {/* {activeTab === 'attendance' && renderAttendanceTab()} */}
         {activeTab === 'budgets' && renderBudgetsTab()}
+
+        {/* Modal de Empresas da AlterData */}
+        {showAlterDataEmpresas && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" onClick={() => setShowAlterDataEmpresas(false)}>
+            <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-blue-100">
+                      <FiBriefcase className="text-blue-600" size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900">Empresas Cadastradas na AlterData</h3>
+                      <p className="text-sm text-gray-500">Empresas ativas encontradas</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowAlterDataEmpresas(false)}
+                    className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                  >
+                    <FiX className="text-gray-500" size={24} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto p-6">
+                {isLoadingAlterDataEmpresas ? (
+                  <div className="flex items-center justify-center py-12">
+                    <div className="text-center">
+                      <FiRefreshCw className="animate-spin text-blue-600 mx-auto mb-4" size={32} />
+                      <p className="text-gray-600 font-medium">Carregando empresas...</p>
+                    </div>
+                  </div>
+                ) : alterDataEmpresas.length === 0 ? (
+                  <div className="text-center py-12">
+                    <FiBriefcase className="text-gray-300 mx-auto mb-4" size={48} />
+                    <p className="text-gray-600 font-medium">Nenhuma empresa encontrada</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {alterDataEmpresas.map((empresa, idx) => {
+                      const empresaId = empresa.id;
+                      const funcionarios = alterDataFuncionarios[empresaId] || [];
+                      const isLoading = loadingFuncionarios[empresaId] || false;
+                      const isExpanded = expandedEmpresaFuncionarios.has(empresaId);
+                      
+                      return (
+                        <div
+                          key={empresaId || idx}
+                          className="rounded-xl border-2 border-gray-200 hover:border-blue-300 hover:shadow-md transition-all duration-200 bg-white overflow-hidden"
+                        >
+                          <div className="p-4">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <h4 className="text-lg font-bold text-gray-900">
+                                    {empresa.nome || empresa.razaoSocial || 'Sem nome'}
+                                  </h4>
+                                  {empresa.ativa && (
+                                    <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-emerald-100 text-emerald-700">
+                                      Ativa
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                  <div>
+                                    <span className="text-gray-500 font-medium">ID:</span>
+                                    <span className="ml-2 text-gray-900 font-semibold">{empresa.id}</span>
+                                  </div>
+                                  {empresa.cnpj && (
+                                    <div>
+                                      <span className="text-gray-500 font-medium">CNPJ:</span>
+                                      <span className="ml-2 text-gray-900 font-semibold">{empresa.cnpj}</span>
+                                    </div>
+                                  )}
+                                  {empresa.codigo && (
+                                    <div>
+                                      <span className="text-gray-500 font-medium">Código:</span>
+                                      <span className="ml-2 text-gray-900 font-semibold">{empresa.codigo}</span>
+                                    </div>
+                                  )}
+                                  {empresa.fantasia && (
+                                    <div>
+                                      <span className="text-gray-500 font-medium">Fantasia:</span>
+                                      <span className="ml-2 text-gray-900">{empresa.fantasia}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => fetchFuncionariosEmpresa(empresaId)}
+                                disabled={isLoading}
+                                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-semibold text-xs flex items-center gap-2 transition-all duration-200"
+                                title="Buscar funcionários desta empresa"
+                              >
+                                {isLoading ? (
+                                  <>
+                                    <FiRefreshCw className="animate-spin" size={14} />
+                                    Carregando...
+                                  </>
+                                ) : isExpanded ? (
+                                  <>
+                                    <FiUsers size={14} />
+                                    {funcionarios.length} funcionário(s)
+                                  </>
+                                ) : (
+                                  <>
+                                    <FiUsers size={14} />
+                                    Ver Funcionários
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                          
+                          {/* Seção de Funcionários (expandível) */}
+                          {isExpanded && (
+                            <div className="border-t border-gray-200 bg-gray-50">
+                              <div className="p-4">
+                                {isLoading ? (
+                                  <div className="flex items-center justify-center py-8">
+                                    <div className="text-center">
+                                      <FiRefreshCw className="animate-spin text-blue-600 mx-auto mb-2" size={24} />
+                                      <p className="text-sm text-gray-600">Carregando funcionários...</p>
+                                    </div>
+                                  </div>
+                                ) : funcionarios.length === 0 ? (
+                                  <div className="text-center py-8">
+                                    <FiUser className="text-gray-300 mx-auto mb-2" size={32} />
+                                    <p className="text-sm text-gray-600">Nenhum funcionário encontrado</p>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-2">
+                                    <h5 className="text-sm font-bold text-gray-700 mb-3">
+                                      Funcionários ({funcionarios.length})
+                                    </h5>
+                                    <div className="max-h-96 overflow-y-auto space-y-2">
+                                      {funcionarios.map((func, funcIdx) => (
+                                        <div
+                                          key={func.id || funcIdx}
+                                          className="p-3 rounded-lg border border-gray-200 bg-white hover:border-blue-300 transition-colors"
+                                        >
+                                          <div className="flex items-start justify-between gap-3">
+                                            <div className="flex-1">
+                                              <div className="flex items-center gap-2 mb-1">
+                                                <h6 className="font-semibold text-gray-900">{func.nome}</h6>
+                                                {func.status && (
+                                                  <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                                                    func.status === 'Ativo'
+                                                      ? 'bg-emerald-100 text-emerald-700' 
+                                                      : 'bg-gray-100 text-gray-600'
+                                                  }`}>
+                                                    {func.status}
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                                <div>
+                                                  <span className="text-gray-500">ID:</span>
+                                                  <span className="ml-1 text-gray-900 font-medium">{func.id}</span>
+                                                </div>
+                                                {func.codigo && (
+                                                  <div>
+                                                    <span className="text-gray-500">Código/Matrícula:</span>
+                                                    <span className="ml-1 text-gray-900 font-medium">{func.codigo}</span>
+                                                  </div>
+                                                )}
+                                                {func.afastamentoDescricao && (
+                                                  <div className="col-span-2">
+                                                    <span className="text-gray-500">Afastamento:</span>
+                                                    <span className="ml-1 text-gray-900">{func.afastamentoDescricao}</span>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-600">
+                    Total: <span className="font-semibold text-gray-900">{alterDataEmpresas.length}</span> empresa(s)
+                  </p>
+                  <button
+                    onClick={() => setShowAlterDataEmpresas(false)}
+                    className="px-4 py-2 rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300 font-semibold text-sm transition-colors"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <footer className="mt-12 text-center">
           <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
