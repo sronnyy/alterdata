@@ -26,7 +26,8 @@ export default function Dashboard() {
   const [isFetchingAttendance, setIsFetchingAttendance] = useState(false);
 
   // Estados para Verbas
-  const [budgets, setBudgets] = useState([]);
+  const [allBudgets, setAllBudgets] = useState([]); // Todos os dados carregados
+  const [budgets, setBudgets] = useState([]); // Dados paginados para exibição
   const [isFetchingBudgets, setIsFetchingBudgets] = useState(false);
 
   // Estados para Empresas
@@ -35,6 +36,9 @@ export default function Dashboard() {
 
   // Estados para Accordion de Verbas
   const [expandedBudgets, setExpandedBudgets] = useState([]);
+  
+  // Estado para acordeão de Informações da Empresa
+  const [isCompanyInfoExpanded, setIsCompanyInfoExpanded] = useState(false);
 
   // Filtros
   const [filters, setFilters] = useState({
@@ -65,7 +69,7 @@ export default function Dashboard() {
     externalIds: '',
     budgetConfigId: '',
     page: 1,
-    pageSize: 10,
+    pageSize: 20,
   });
 
   const [pagination, setPagination] = useState({
@@ -218,6 +222,7 @@ export default function Dashboard() {
         month: budgetsFilters.month,
         companyId: budgetsFilters.companyId
       });
+      setAllBudgets([]);
       setBudgets([]);
       return;
     }
@@ -252,8 +257,6 @@ export default function Dashboard() {
         ...(budgetsFilters.employeeIds && { employeeIds: budgetsFilters.employeeIds }),
         ...(budgetsFilters.externalIds && { externalIds: budgetsFilters.externalIds }),
         ...(budgetsFilters.budgetConfigId && { budgetConfigId: budgetsFilters.budgetConfigId }),
-        page: String(budgetsFilters.page),
-        pageSize: String(budgetsFilters.pageSize),
       });
 
       const url = `/api/budgets?${params.toString()}`;
@@ -291,24 +294,28 @@ export default function Dashboard() {
         throw new Error(data.error);
       }
       
-      const records = data.records || [];
-      const totalCount = Number(data.metadata?.totalCount ?? 0);
+      const allRecords = data.records || [];
+      const totalCount = allRecords.length;
       
-      console.log(`✅ [FRONTEND] Verbas carregadas: ${records.length} funcionários`);
+      console.log(`✅ [FRONTEND] Verbas carregadas: ${totalCount} funcionários`);
       console.log('💰 [FRONTEND] Resumo dos funcionários:');
-      records.forEach((func, index) => {
+      allRecords.forEach((func, index) => {
         const totalEventos = func.events?.length || 0;
         console.log(`  ${index + 1}. ${func.employeeName || func.externalId || func.employeeId} - ${totalEventos} evento(s)`);
       });
-      console.log(`✅ [FRONTEND] Total de eventos: ${records.reduce((sum, f) => sum + (f.events?.length || 0), 0)}`);
+      console.log(`✅ [FRONTEND] Total de eventos: ${allRecords.reduce((sum, f) => sum + (f.events?.length || 0), 0)}`);
       console.log('💰 [FRONTEND] ==========================================');
       
-      setBudgets(records);
+      // Armazenar todos os dados
+      setAllBudgets(allRecords);
+      
+      // Calcular paginação
+      const totalPages = Math.ceil(totalCount / budgetsFilters.pageSize);
       setBudgetsPagination(prev => ({
         ...prev,
-        page: Number(data.metadata?.currentPage ?? 1),
+        page: 1, // Sempre começar na página 1 após novo carregamento
         total: totalCount,
-        totalPages: Number(data.metadata?.totalPages ?? 1),
+        totalPages: totalPages,
       }));
       setStats(p => ({ ...p, totalBudgets: totalCount }));
     } catch (e) {
@@ -316,6 +323,7 @@ export default function Dashboard() {
       console.error(`❌ [FRONTEND] Erro ao buscar verbas (${responseTime}ms):`, e.message);
       // Mostra mensagem de erro mais amigável
       alert(e.message || 'Erro ao buscar verbas. Tente novamente.');
+      setAllBudgets([]);
       setBudgets([]);
     } finally {
       setIsFetchingBudgets(false);
@@ -414,12 +422,35 @@ export default function Dashboard() {
     fetchCompanies();
   }, []);
 
-  // Verbas (budgets)
+  // Verbas (budgets) - Carregar dados apenas quando filtros mudarem (não quando página mudar)
   useEffect(() => {
     if (activeTab === 'budgets' && budgetsFilters.year && budgetsFilters.month && budgetsFilters.companyId) {
       fetchBudgets();
     }
-  }, [budgetsFilters.page, budgetsFilters.pageSize, budgetsFilters.year, budgetsFilters.month, budgetsFilters.companyId, activeTab]);
+  }, [budgetsFilters.year, budgetsFilters.month, budgetsFilters.companyId, activeTab]);
+
+  // Aplicar paginação localmente quando allBudgets ou página mudarem
+  useEffect(() => {
+    if (allBudgets.length === 0) {
+      setBudgets([]);
+      return;
+    }
+
+    const startIndex = (budgetsFilters.page - 1) * budgetsFilters.pageSize;
+    const endIndex = startIndex + budgetsFilters.pageSize;
+    const paginatedRecords = allBudgets.slice(startIndex, endIndex);
+    
+    setBudgets(paginatedRecords);
+    
+    // Atualizar paginação
+    const totalPages = Math.ceil(allBudgets.length / budgetsFilters.pageSize);
+    setBudgetsPagination(prev => ({
+      ...prev,
+      page: budgetsFilters.page,
+      total: allBudgets.length,
+      totalPages: totalPages,
+    }));
+  }, [allBudgets, budgetsFilters.page, budgetsFilters.pageSize]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -1319,8 +1350,11 @@ export default function Dashboard() {
         const selectedCompany = companies.find(c => (c.id || c._id) === budgetsFilters.companyId);
         return selectedCompany ? (
           <div className="rounded-2xl shadow-xl bg-white border border-gray-100 overflow-hidden">
-            {/* Header */}
-            <div className="px-8 py-6 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100">
+            {/* Header - Botão do Acordeão */}
+            <button
+              onClick={() => setIsCompanyInfoExpanded(!isCompanyInfoExpanded)}
+              className="w-full px-8 py-6 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100 hover:from-gray-100 hover:to-gray-50 transition-all duration-200"
+            >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className="p-3 rounded-xl bg-gradient-to-br from-gray-100 to-gray-50 border border-gray-200">
@@ -1335,20 +1369,28 @@ export default function Dashboard() {
                     </p>
                   </div>
                 </div>
-                {selectedCompany.active !== undefined && (
-                  <span className={`inline-flex items-center px-4 py-2 rounded-xl text-sm font-semibold ${
-                    selectedCompany.active 
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
-                      : 'bg-gray-100 text-gray-700 border border-gray-200'
-                  }`}>
-                    {selectedCompany.active ? 'Ativa' : 'Inativa'}
-                  </span>
-                )}
+                <div className="flex items-center gap-4">
+                  {selectedCompany.active !== undefined && (
+                    <span className={`inline-flex items-center px-4 py-2 rounded-xl text-sm font-semibold ${
+                      selectedCompany.active 
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                        : 'bg-gray-100 text-gray-700 border border-gray-200'
+                    }`}>
+                      {selectedCompany.active ? 'Ativa' : 'Inativa'}
+                    </span>
+                  )}
+                  <div className={`transition-transform duration-300 ${isCompanyInfoExpanded ? 'rotate-180' : ''}`}>
+                    <FiChevronDown className="text-gray-400" size={24} />
+                  </div>
+                </div>
               </div>
-            </div>
+            </button>
 
-            {/* Conteúdo */}
-            <div className="p-8">
+            {/* Conteúdo - Acordeão */}
+            <div className={`transition-all duration-500 ease-out overflow-hidden ${
+              isCompanyInfoExpanded ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
+            }`}>
+              <div className="p-8">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Coluna Esquerda - Informações Básicas */}
                 <div className="space-y-6">
@@ -1494,6 +1536,7 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
+              </div>
             </div>
           </div>
         ) : null;
@@ -1596,6 +1639,17 @@ export default function Dashboard() {
                         {funcionario.events && funcionario.events.length > 0 ? (
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                             {funcionario.events.map((event, eventIdx) => {
+                              // Só mostra horas se o campo hm existir e não for null/undefined/vazio
+                              const hoursValue = event.hm && event.hm !== null && event.hm !== undefined && event.hm !== '' 
+                                ? event.hm 
+                                : null;
+
+                              // Se não tiver horas mas for tipo DIAS, mostra o número de dias
+                              const isDiasType = event.type && event.type.toUpperCase() === 'DIAS';
+                              const daysValue = !hoursValue && isDiasType && event.value 
+                                ? event.value 
+                                : null;
+
                               return (
                                 <div
                                   key={eventIdx}
@@ -1633,14 +1687,26 @@ export default function Dashboard() {
                                       </span>
                                     </div>
 
-                                    {event.hm && (
+                                    {hoursValue && (
                                       <div className="flex items-center justify-between">
                                         <span className="text-sm font-medium text-gray-600 flex items-center gap-2">
                                           <FiClock size={14} className="text-gray-400" />
                                           Horas
                                         </span>
                                         <span className="text-sm font-semibold text-gray-900">
-                                          {event.hm}
+                                          {hoursValue}
+                                        </span>
+                                      </div>
+                                    )}
+
+                                    {daysValue && (
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-sm font-medium text-gray-600 flex items-center gap-2">
+                                          <FiCalendar size={14} className="text-gray-400" />
+                                          Dias
+                                        </span>
+                                        <span className="text-sm font-semibold text-gray-900">
+                                          {daysValue} {parseFloat(daysValue) === 1 ? 'dia' : 'dias'}
                                         </span>
                                       </div>
                                     )}
@@ -1817,7 +1883,7 @@ export default function Dashboard() {
 
         <footer className="mt-12 text-center">
           <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
-            MediaWorks Dashboard • {new Date().getFullYear()} • Todos os direitos reservados
+            AlterData • {new Date().getFullYear()} • Todos os direitos reservados
           </p>
         </footer>
       </div>

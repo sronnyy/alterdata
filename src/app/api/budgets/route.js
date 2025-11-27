@@ -114,10 +114,42 @@ export async function GET(request) {
     const registros = data.data;
     console.log(`✅ [BUDGETS API] Total de registros de verbas recebidos: ${registros.length}`);
 
+    // Log detalhado dos primeiros registros para análise
+    if (registros.length > 0) {
+      console.log('📋 [BUDGETS API] ===== ANÁLISE DOS DADOS DA API =====');
+      console.log('📋 [BUDGETS API] Exemplo do primeiro registro completo:');
+      console.log(JSON.stringify(registros[0], null, 2));
+      console.log('📋 [BUDGETS API] Campos disponíveis no primeiro registro:');
+      console.log(Object.keys(registros[0]));
+      console.log('📋 [BUDGETS API] Valores relevantes do primeiro registro:');
+      const firstRec = registros[0];
+      console.log({
+        date: firstRec.date,
+        eventCode: firstRec.eventCode,
+        eventDescription: firstRec.eventDescription,
+        eventValue: firstRec.eventValue,
+        eventDecimalValue: firstRec.eventDecimalValue,
+        eventValueInHoursAndMinutes: firstRec.eventValueInHoursAndMinutes,
+        eventType: firstRec.eventType,
+        employeeId: firstRec.employeeId,
+        externalId: firstRec.externalId,
+      });
+      
+      // Verificar se há registros com "Dias de Atestado"
+      const atestadoRecords = registros.filter(r => 
+        r.eventDescription && r.eventDescription.toLowerCase().includes('atestado')
+      );
+      if (atestadoRecords.length > 0) {
+        console.log(`📋 [BUDGETS API] Encontrados ${atestadoRecords.length} registros de "Dias de Atestado"`);
+        console.log('📋 [BUDGETS API] Exemplo de registro de atestado:');
+        console.log(JSON.stringify(atestadoRecords[0], null, 2));
+      }
+      console.log('📋 [BUDGETS API] ==========================================');
+    }
+
     // Agrupa verbas por funcionário
     const funcionarios = {};
 
-    console.log('💰 [BUDGETS API] Agrupando verbas por funcionário...');
     registros.forEach((rec) => {
       const empId = rec.employeeId;
 
@@ -127,7 +159,6 @@ export async function GET(request) {
           externalId: rec.externalId || null,
           events: [],
         };
-        console.log(`💰 [BUDGETS API] Novo funcionário encontrado: employeeId=${empId}, externalId=${rec.externalId || 'N/A'}`);
       }
 
       funcionarios[empId].events.push({
@@ -142,102 +173,76 @@ export async function GET(request) {
     });
 
     const totalFuncionarios = Object.keys(funcionarios).length;
-    console.log(`✅ [BUDGETS API] Total de funcionários únicos: ${totalFuncionarios}`);
-    console.log('💰 [BUDGETS API] EmployeeIds encontrados:', Object.keys(funcionarios).join(', '));
+    console.log(`✅ [BUDGETS API] ${totalFuncionarios} funcionários únicos encontrados`);
 
-    // Buscar nomes dos funcionários usando o employeeId
+    // Buscar nomes dos funcionários usando o employeeId em paralelo (máxima velocidade)
     const employeeIds = Object.keys(funcionarios);
     const employeeNamesMap = {};
 
-    console.log(`👤 [EMPLOYEES API] Iniciando busca de nomes para ${employeeIds.length} funcionários...`);
+    console.log(`👤 [EMPLOYEES API] Buscando nomes para ${employeeIds.length} funcionários em paralelo...`);
+    const namesStartTime = Date.now();
 
-    // Função auxiliar para fazer delay
-    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-    // Buscar cada funcionário usando seu employeeId com delay para evitar rate limiting
-    for (let i = 0; i < employeeIds.length; i++) {
-      const empId = employeeIds[i];
-      const externalId = funcionarios[empId].externalId;
-      
-      console.log(`👤 [EMPLOYEES API] [${i + 1}/${employeeIds.length}] Buscando nome para employeeId=${empId}, externalId=${externalId || 'N/A'}`);
-      
-      // Adiciona delay entre requisições (exceto na primeira)
-      if (i > 0) {
-        await delay(300); // 300ms de delay entre requisições
-      }
-
+    // Função otimizada para buscar nome de um funcionário
+    async function buscarNomeFuncionario(empId) {
       try {
-        const employeeUrl = `https://api.flashapp.services/core/v1/employees/${empId}`;
-        const employeeStartTime = Date.now();
-        
-        const employeeResponse = await fetch(employeeUrl, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'x-flash-auth': API_TOKEN,
-            'User-Agent': 'Mozilla/5.0 (compatible; FlashApp-Client/1.0)',
-          },
-        });
-
-        const employeeResponseTime = Date.now() - employeeStartTime;
+        const employeeResponse = await fetch(
+          `https://api.flashapp.services/core/v1/employees/${empId}`,
+          {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'x-flash-auth': API_TOKEN,
+              'User-Agent': 'Mozilla/5.0 (compatible; FlashApp-Client/1.0)',
+            },
+          }
+        );
 
         if (employeeResponse.ok) {
           const employeeData = await employeeResponse.json();
-          if (employeeData.name) {
-            employeeNamesMap[empId] = employeeData.name;
-            console.log(`✅ [EMPLOYEES API] Nome encontrado para ${empId}: "${employeeData.name}" (${employeeResponseTime}ms)`);
-          } else {
-            console.warn(`⚠️ [EMPLOYEES API] Nome não encontrado no retorno para ${empId}`);
-          }
-        } else if (employeeResponse.status === 405 || employeeResponse.status === 429) {
-          // Se receber erro de rate limiting ou método não permitido, para de buscar nomes
-          console.warn(`❌ [EMPLOYEES API] Rate limit atingido ao buscar funcionários. Parando busca de nomes.`);
-          break;
-        } else {
-          console.warn(`⚠️ [EMPLOYEES API] Não foi possível buscar o nome para employeeId ${empId}. Status: ${employeeResponse.status} (${employeeResponseTime}ms)`);
+          return employeeData.name ? { empId, name: employeeData.name } : null;
         }
+        return null;
       } catch (error) {
-        // Continua sem o nome se houver erro
-        console.error(`❌ [EMPLOYEES API] Erro ao buscar funcionário ${empId}:`, error.message);
-        // Se for erro de conexão, adiciona delay maior antes de continuar
-        if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
-          console.warn(`⚠️ [EMPLOYEES API] Erro de conexão detectado. Aguardando 1s antes de continuar...`);
-          await delay(1000);
-        }
+        return null;
       }
     }
 
-    const totalNomesEncontrados = Object.keys(employeeNamesMap).length;
-    console.log(`✅ [EMPLOYEES API] Busca de nomes concluída: ${totalNomesEncontrados}/${employeeIds.length} nomes encontrados`);
-    if (totalNomesEncontrados < employeeIds.length) {
-      const semNome = employeeIds.filter(id => !employeeNamesMap[id]);
-      console.log(`⚠️ [EMPLOYEES API] Funcionários sem nome: ${semNome.join(', ')}`);
-    }
+    // Processar TODAS as requisições em paralelo (sem lotes sequenciais)
+    // Usando Promise.allSettled para garantir que todas executem simultaneamente
+    const promises = employeeIds.map(empId => buscarNomeFuncionario(empId));
+    const results = await Promise.allSettled(promises);
 
-    // Adicionar nomes aos funcionários
-    console.log('💰 [BUDGETS API] Adicionando nomes aos funcionários...');
-    const records = Object.values(funcionarios).map((func) => {
-      const nome = employeeNamesMap[func.employeeId] || null;
-      const totalEventos = func.events.length;
-      console.log(`💰 [BUDGETS API] Funcionário: ${func.externalId || func.employeeId} - Nome: ${nome || 'N/A'} - Eventos: ${totalEventos}`);
-      return {
-        ...func,
-        employeeName: nome,
-      };
+    // Processar resultados
+    results.forEach((result) => {
+      if (result.status === 'fulfilled' && result.value?.name) {
+        employeeNamesMap[result.value.empId] = result.value.name;
+      }
     });
 
+    const namesTotalTime = Date.now() - namesStartTime;
+    const totalNomesEncontrados = Object.keys(employeeNamesMap).length;
+    console.log(`✅ [EMPLOYEES API] ${totalNomesEncontrados}/${employeeIds.length} nomes encontrados em ${namesTotalTime}ms`);
+
+    // Adicionar nomes aos funcionários
+    const records = Object.values(funcionarios).map((func) => ({
+      ...func,
+      employeeName: employeeNamesMap[func.employeeId] || null,
+    }));
+
     const totalTime = Date.now() - startTime;
+    const totalCount = records.length;
     console.log(`✅ [BUDGETS API] Processo concluído em ${totalTime}ms`);
-    console.log(`✅ [BUDGETS API] Total de funcionários retornados: ${records.length}`);
+    console.log(`✅ [BUDGETS API] Total de funcionários retornados: ${totalCount}`);
     console.log('💰 [BUDGETS API] ==========================================');
 
+    // Retornar TODOS os registros (paginação será feita no frontend)
     return NextResponse.json({
       records: records,
       metadata: {
         currentPage: 1,
-        perPage: 50,
-        totalCount: records.length,
+        perPage: totalCount,
+        totalCount: totalCount,
         totalPages: 1,
       },
     });
