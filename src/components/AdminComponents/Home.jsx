@@ -1,7 +1,7 @@
 // components/AdminComponents/Home.jsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   FiUsers, FiSend, FiLogOut, FiChevronLeft, FiChevronRight, 
   FiRefreshCw, FiSearch, FiClock, FiDollarSign, FiFilter,
@@ -120,6 +120,9 @@ export default function Dashboard() {
     todayAttendance: 0,
     totalBudgets: 0
   });
+  
+  // Estado para busca de funcionários
+  const [budgetsSearch, setBudgetsSearch] = useState('');
 
   const logout = async () => {
     await signOut({ redirect: true, callbackUrl: '/' });
@@ -586,8 +589,11 @@ export default function Dashboard() {
       return;
     }
 
+    // Usar funcionários filtrados (já calculado via useMemo)
+    const funcionariosParaEnviar = filteredBudgets;
+    
     const confirmar = confirm(
-      `Deseja enviar movimentos de TODOS os ${allBudgets.length} funcionários para o AlterData?`
+      `Deseja enviar movimentos de ${funcionariosParaEnviar.length} funcionário${funcionariosParaEnviar.length !== 1 ? 's' : ''} ${budgetsSearch ? '(filtrados pela busca)' : ''} para o AlterData?`
     );
 
     if (!confirmar) return;
@@ -596,9 +602,9 @@ export default function Dashboard() {
     const timestamp = new Date();
 
     try {
-      // Preparar todos os movimentos de todos os funcionários
+      // Preparar todos os movimentos dos funcionários filtrados
       const movimentos = [];
-      allBudgets.forEach(funcionario => {
+      funcionariosParaEnviar.forEach(funcionario => {
         if (funcionario.events && funcionario.events.length > 0) {
           funcionario.events.forEach(event => {
             movimentos.push({
@@ -633,9 +639,9 @@ export default function Dashboard() {
         throw new Error(data.error || 'Erro ao enviar movimentos');
       }
 
-      // Atualizar status de todos os funcionários processados
+      // Atualizar status dos funcionários processados
       const funcionariosProcessados = new Set();
-      allBudgets.forEach(funcionario => {
+      funcionariosParaEnviar.forEach(funcionario => {
         if (funcionario.events && funcionario.events.length > 0) {
           funcionariosProcessados.add(funcionario.employeeId);
         }
@@ -660,10 +666,10 @@ export default function Dashboard() {
       }
     } catch (error) {
       console.error('Erro ao enviar movimentos:', error);
-      // Marcar todos como erro
+      // Marcar como erro
       setEnviadosStatus(prev => {
         const newStatus = { ...prev };
-        allBudgets.forEach(funcionario => {
+        funcionariosParaEnviar.forEach(funcionario => {
           if (funcionario.events && funcionario.events.length > 0) {
             newStatus[funcionario.employeeId] = {
               status: 'error',
@@ -711,28 +717,59 @@ export default function Dashboard() {
     }
   }, [budgetsFilters.year, budgetsFilters.month, budgetsFilters.companyId, activeTab]);
 
-  // Aplicar paginação localmente quando allBudgets ou página mudarem
+  // Filtrar funcionários por busca (nome, matrícula ou setor) - memoizado para performance
+  const filteredBudgets = useMemo(() => {
+    if (allBudgets.length === 0) return [];
+    
+    if (!budgetsSearch.trim()) return allBudgets;
+    
+    const searchTerm = budgetsSearch.trim().toLowerCase();
+    return allBudgets.filter(funcionario => {
+      // Buscar por nome
+      const nome = (funcionario.employeeName || '').toLowerCase();
+      const matchNome = nome.includes(searchTerm);
+      
+      // Buscar por matrícula
+      const matricula = (funcionario.externalId || '').toLowerCase();
+      const matchMatricula = matricula.includes(searchTerm);
+      
+      // Buscar por setor (se disponível - pode vir como department, setor ou sector)
+      const setor = (funcionario.department || funcionario.setor || funcionario.sector || '').toLowerCase();
+      const matchSetor = setor.includes(searchTerm);
+      
+      return matchNome || matchMatricula || matchSetor;
+    });
+  }, [allBudgets, budgetsSearch]);
+
+  // Aplicar paginação localmente quando filteredBudgets ou página mudarem
   useEffect(() => {
-    if (allBudgets.length === 0) {
+    if (filteredBudgets.length === 0) {
       setBudgets([]);
+      setBudgetsPagination(prev => ({
+        ...prev,
+        page: 1,
+        total: 0,
+        totalPages: 1,
+      }));
       return;
     }
 
+    // Aplicar paginação
     const startIndex = (budgetsFilters.page - 1) * budgetsFilters.pageSize;
     const endIndex = startIndex + budgetsFilters.pageSize;
-    const paginatedRecords = allBudgets.slice(startIndex, endIndex);
+    const paginatedRecords = filteredBudgets.slice(startIndex, endIndex);
     
     setBudgets(paginatedRecords);
     
     // Atualizar paginação
-    const totalPages = Math.ceil(allBudgets.length / budgetsFilters.pageSize);
+    const totalPages = Math.ceil(filteredBudgets.length / budgetsFilters.pageSize);
     setBudgetsPagination(prev => ({
       ...prev,
       page: budgetsFilters.page,
-      total: allBudgets.length,
+      total: filteredBudgets.length,
       totalPages: totalPages,
     }));
-  }, [allBudgets, budgetsFilters.page, budgetsFilters.pageSize]);
+  }, [filteredBudgets, budgetsFilters.page, budgetsFilters.pageSize]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -1896,18 +1933,18 @@ export default function Dashboard() {
               )}
               <button
                 onClick={sendMovimentosEmpresa}
-                disabled={isSendingMovimentos || allBudgets.length === 0 || !budgetsFilters.companyId}
+                disabled={isSendingMovimentos || filteredBudgets.length === 0 || !budgetsFilters.companyId}
                 className="px-5 py-2.5 rounded-xl transition-all duration-200 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed font-semibold text-sm flex items-center gap-2 shadow-sm hover:shadow-md disabled:hover:shadow-sm"
               >
                 {isSendingMovimentos ? (
                   <>
                     <FiRefreshCw className="animate-spin" size={16} />
-                    Enviando Todos...
+                    Enviando...
                   </>
                 ) : (
                   <>
                     <FiSend size={16} />
-                    Enviar Todos ({allBudgets.length})
+                    Enviar {budgetsSearch ? 'Filtrados' : 'Todos'} ({filteredBudgets.length})
                   </>
                 )}
               </button>
@@ -1930,6 +1967,42 @@ export default function Dashboard() {
               </button>
             </div>
           </div>
+          
+          {/* Campo de busca de funcionários */}
+          {allBudgets.length > 0 && (
+            <div className="mt-6">
+              <div className="relative">
+                <FiSearch className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                <input
+                  type="text"
+                  value={budgetsSearch}
+                  onChange={(e) => {
+                    setBudgetsSearch(e.target.value);
+                    setBudgetsFilters(p => ({ ...p, page: 1 })); // Resetar para página 1 ao buscar
+                  }}
+                  placeholder="Buscar por nome, matrícula ou setor..."
+                  className="w-full pl-12 pr-4 py-3 rounded-xl border-2 border-gray-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all duration-200 text-gray-900 placeholder-gray-400"
+                />
+                {budgetsSearch && (
+                  <button
+                    onClick={() => {
+                      setBudgetsSearch('');
+                      setBudgetsFilters(p => ({ ...p, page: 1 }));
+                    }}
+                    className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                    title="Limpar busca"
+                  >
+                    <FiX size={20} />
+                  </button>
+                )}
+              </div>
+              {budgetsSearch && (
+                <p className="mt-2 text-xs text-gray-500">
+                  Buscando por: <span className="font-semibold text-gray-700">"{budgetsSearch}"</span>
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="p-8 bg-gray-50/50">
@@ -2489,6 +2562,13 @@ export default function Dashboard() {
                                   <div>
                                     <span className="text-gray-500 font-medium">ID:</span>
                                     <span className="ml-2 text-gray-900 font-semibold">{empresa.id}</span>
+                                    {empresa.externoid && (
+                                      <span className="ml-3 text-gray-500">
+                                        <span className="text-gray-400">|</span>
+                                        <span className="ml-2 text-gray-500 font-medium">ExternoID:</span>
+                                        <span className="ml-2 text-gray-700">{empresa.externoid}</span>
+                                      </span>
+                                    )}
                                   </div>
                                   {empresa.cnpj && (
                                     <div>

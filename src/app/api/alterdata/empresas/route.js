@@ -64,11 +64,31 @@ export async function GET(request) {
     
     const data = await response.json();
     
+    console.log('🏢 [ALTERDATA EMPRESAS API] ===== RESPOSTA COMPLETA DA API DE EMPRESAS =====');
+    console.log(JSON.stringify(data, null, 2));
+    console.log('🏢 [ALTERDATA EMPRESAS API] =================================================');
+    
     // Processar resposta JSON:API
     const empresas = Array.isArray(data.data) ? data.data : [];
     const totalCount = data.meta?.total || empresas.length;
     
-    console.log(`✅ [ALTERDATA EMPRESAS API] ${empresas.length} empresa(s) encontrada(s)`);
+    console.log(`✅ [ALTERDATA EMPRESAS API] ${empresas.length} empresa(s) encontrada(s) na resposta`);
+    console.log('🏢 [ALTERDATA EMPRESAS API] ===== DETALHES DE CADA EMPRESA =====');
+    
+    empresas.forEach((empresa, index) => {
+      console.log(`🏢 [ALTERDATA EMPRESAS API] Empresa ${index + 1}:`, {
+        id: empresa.id,
+        type: empresa.type,
+        nome: empresa.attributes?.nome || empresa.attributes?.razaoSocial || 'Sem nome',
+        razaoSocial: empresa.attributes?.razaoSocial,
+        cnpj: empresa.attributes?.cnpj,
+        ativa: empresa.attributes?.ativa,
+        attributesCompletos: empresa.attributes,
+        relationships: empresa.relationships
+      });
+    });
+    
+    console.log('🏢 [ALTERDATA EMPRESAS API] ===========================================');
     
     // Formatar empresas para facilitar uso no frontend
     const empresasFormatadas = empresas.map(empresa => ({
@@ -85,6 +105,10 @@ export async function GET(request) {
     empresasFormatadas.forEach((emp, idx) => {
       console.log(`  ${idx + 1}. ID: ${emp.id} | Nome: ${emp.nome} | CNPJ: ${emp.cnpj || 'N/A'} | Ativa: ${emp.ativa !== null ? emp.ativa : 'N/A'}`);
     });
+    
+    console.log('🏢 [ALTERDATA EMPRESAS API] ===== METADADOS DA RESPOSTA =====');
+    console.log(JSON.stringify(data.meta, null, 2));
+    console.log('🏢 [ALTERDATA EMPRESAS API] ==================================');
     
     const totalTime = Date.now() - startTime;
     console.log(`✅ [ALTERDATA EMPRESAS API] Processamento concluído em ${totalTime}ms`);
@@ -114,6 +138,8 @@ export async function GET(request) {
     );
   }
 }
+
+
 
 
 

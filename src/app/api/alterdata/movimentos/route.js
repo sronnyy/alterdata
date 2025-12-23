@@ -35,6 +35,13 @@ function getPeriodFromYearMonth(year, month) {
   };
 }
 
+// Mapeamento de nomes de empresas Flash para nomes de empresas AlterData
+// Quando o nome na Flash é diferente do nome na AlterData
+const MAPEAMENTO_EMPRESAS_FLASH_ALTERDATA = {
+  '2T SERVICE': 'TEODORO CONSTRUÇÕES SERVIÇOS E ADM IMOBILIARIA LTD',
+  // Adicionar outros mapeamentos aqui conforme necessário
+};
+
 // Mapeamento de eventCode Flash para código Verba AlterData
 // Baseado na tabela de mapeamento fornecida
 const EVENT_CODE_TO_VERBA_ALTERDATA = {
@@ -54,13 +61,17 @@ const EVENT_CODE_TO_VERBA_ALTERDATA = {
   '604': '19',   // ADN - Adicional Noturno → Noturno 30% (padrão: 19, alternativo: 319 para Ad. Norturno 20%)
 };
 
-// Mapeamento de código Verba AlterData para tipomovimento e evento
-// Este mapeamento será preenchido dinamicamente ao buscar as verbas da API
-// Chave: codigo do evento (ex: "314"), Valor: { tipomovimento, eventoId, nome }
-let VERBA_ALTERDATA_TO_TIPOMOVIMENTO_EVENTO = {};
+// Cache de eventos já buscados: código verba → { eventoId, tipomovimentoId, nome }
+const cacheEventosAlterData = {};
 
-// Função para buscar todas as verbas (eventos) da AlterData e criar mapeamento
-async function buscarVerbasAlterData() {
+// Função para buscar um evento específico da AlterData por código
+// Baseada na tabela de mapeamento fornecida
+async function buscarEventoAlterDataPorCodigo(codigoVerba) {
+  // Se já está em cache, retornar do cache
+  if (cacheEventosAlterData[codigoVerba]) {
+    return cacheEventosAlterData[codigoVerba];
+  }
+  
   const token = process.env.ALTERDATA_API_TOKEN;
   
   if (!token) {
@@ -68,101 +79,20 @@ async function buscarVerbasAlterData() {
   }
   
   console.log('📋 [ALTERDATA MOVIMENTOS API] ==========================================');
-  console.log('📋 [ALTERDATA MOVIMENTOS API] Buscando verbas/eventos da AlterData...');
-  console.log('📋 [ALTERDATA MOVIMENTOS API] ==========================================');
+  console.log(`🔍 [ALTERDATA MOVIMENTOS API] Buscando evento AlterData por código: ${codigoVerba}`);
   
   try {
-    // Buscar eventos - tentar com parâmetros simples primeiro
-    let eventosData = null;
-    let eventosResponse = null;
+    // Buscar evento específico por código usando filtro
+    const eventosUrl = new URL(ALTERDATA_EVENTOS_URL);
+    eventosUrl.searchParams.append('filter[eventos][codigo][EQ]', codigoVerba);
+    eventosUrl.searchParams.append('page[offset]', '0');
+    eventosUrl.searchParams.append('page[limit]', '1');
+    eventosUrl.searchParams.append('include', 'tipomovimento');
     
-    // Tentativa 1: Busca simples sem include
-    try {
-      const eventosUrl = new URL(ALTERDATA_EVENTOS_URL);
-      eventosUrl.searchParams.append('page[offset]', '0');
-      eventosUrl.searchParams.append('page[limit]', '100');
-      
-      console.log('📋 [ALTERDATA MOVIMENTOS API] URL Eventos (tentativa 1):', eventosUrl.toString());
-      
-      eventosResponse = await fetch(eventosUrl.toString(), {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/vnd.api+json',
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/vnd.api+json'
-        }
-      });
-      
-      if (eventosResponse.ok) {
-        eventosData = await eventosResponse.json();
-        console.log('✅ [ALTERDATA MOVIMENTOS API] Eventos buscados com sucesso (tentativa 1)');
-      } else {
-        throw new Error(`Status ${eventosResponse.status}`);
-      }
-    } catch (error1) {
-      console.warn('⚠️ [ALTERDATA MOVIMENTOS API] Tentativa 1 falhou:', error1.message);
-      
-      // Tentativa 2: Com campos específicos
-      try {
-        const eventosUrl2 = new URL(ALTERDATA_EVENTOS_URL);
-        eventosUrl2.searchParams.append('page[offset]', '0');
-        eventosUrl2.searchParams.append('page[limit]', '50'); // Limite ainda menor
-        eventosUrl2.searchParams.append('fields[eventos]', 'codigo,nome');
-        
-        console.log('📋 [ALTERDATA MOVIMENTOS API] URL Eventos (tentativa 2):', eventosUrl2.toString());
-        
-        eventosResponse = await fetch(eventosUrl2.toString(), {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/vnd.api+json',
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'application/vnd.api+json'
-          }
-        });
-        
-        if (eventosResponse.ok) {
-          eventosData = await eventosResponse.json();
-          console.log('✅ [ALTERDATA MOVIMENTOS API] Eventos buscados com sucesso (tentativa 2)');
-        } else {
-          const errorText = await eventosResponse.text();
-          console.error('❌ [ALTERDATA MOVIMENTOS API] Erro ao buscar eventos (tentativa 2):', eventosResponse.status, errorText);
-          throw new Error(`Erro ao buscar eventos: ${eventosResponse.status} - ${errorText}`);
-        }
-      } catch (error2) {
-        const errorText = await eventosResponse?.text() || error2.message;
-        console.error('❌ [ALTERDATA MOVIMENTOS API] Erro ao buscar eventos:', errorText);
-        throw new Error(`Erro ao buscar eventos: ${errorText}`);
-      }
-    }
-    console.log('📋 [ALTERDATA MOVIMENTOS API] ===== RESPOSTA COMPLETA DE EVENTOS =====');
-    console.log(JSON.stringify(eventosData, null, 2));
+    console.log(`📋 [ALTERDATA MOVIMENTOS API] URL: ${eventosUrl.toString()}`);
     console.log('📋 [ALTERDATA MOVIMENTOS API] ==========================================');
     
-    const eventos = Array.isArray(eventosData.data) ? eventosData.data : [];
-    console.log(`📋 [ALTERDATA MOVIMENTOS API] Total de eventos encontrados: ${eventos.length}`);
-    
-    // Log detalhado de cada evento
-    eventos.forEach((evento, index) => {
-      console.log(`📋 [ALTERDATA MOVIMENTOS API] Evento ${index + 1}:`, {
-        id: evento.id,
-        type: evento.type,
-        codigo: evento.attributes?.codigo,
-        nome: evento.attributes?.nome,
-        descricao: evento.attributes?.descricao,
-        tipomovimentoId: evento.relationships?.tipomovimento?.data?.id,
-        attributesCompletos: evento.attributes,
-        relationshipsCompletos: evento.relationships
-      });
-    });
-    
-    // Buscar tipos de movimento
-    const tiposMovimentoUrl = new URL(ALTERDATA_TIPOS_MOVIMENTO_URL);
-    tiposMovimentoUrl.searchParams.append('page[offset]', '0');
-    tiposMovimentoUrl.searchParams.append('page[limit]', '1000');
-    
-    console.log('📋 [ALTERDATA MOVIMENTOS API] URL Tipos de Movimento:', tiposMovimentoUrl.toString());
-    
-    const tiposResponse = await fetch(tiposMovimentoUrl.toString(), {
+    const response = await fetch(eventosUrl.toString(), {
       method: 'GET',
       headers: {
         'Content-Type': 'application/vnd.api+json',
@@ -171,69 +101,69 @@ async function buscarVerbasAlterData() {
       }
     });
     
-    if (!tiposResponse.ok) {
-      const errorText = await tiposResponse.text();
-      console.error('❌ [ALTERDATA MOVIMENTOS API] Erro ao buscar tipos de movimento:', tiposResponse.status, errorText);
-      throw new Error(`Erro ao buscar tipos de movimento: ${tiposResponse.status} - ${errorText}`);
+    console.log(`📋 [ALTERDATA MOVIMENTOS API] Status da resposta: ${response.status} ${response.statusText}`);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ [ALTERDATA MOVIMENTOS API] ===== ERRO NA RESPOSTA =====');
+      console.error(errorText);
+      console.error('❌ [ALTERDATA MOVIMENTOS API] ============================');
+      throw new Error(`Erro ao buscar evento AlterData: ${response.status} - ${errorText}`);
     }
     
-    const tiposData = await tiposResponse.json();
-    console.log('📋 [ALTERDATA MOVIMENTOS API] ===== RESPOSTA COMPLETA DE TIPOS DE MOVIMENTO =====');
-    console.log(JSON.stringify(tiposData, null, 2));
-    console.log('📋 [ALTERDATA MOVIMENTOS API] ===================================================');
+    const data = await response.json();
     
-    const tiposMovimento = Array.isArray(tiposData.data) ? tiposData.data : [];
-    console.log(`📋 [ALTERDATA MOVIMENTOS API] Total de tipos de movimento encontrados: ${tiposMovimento.length}`);
+    console.log('📋 [ALTERDATA MOVIMENTOS API] ===== RESPOSTA COMPLETA DA API DE EVENTOS =====');
+    console.log(JSON.stringify(data, null, 2));
+    console.log('📋 [ALTERDATA MOVIMENTOS API] ===============================================');
     
-    // Log detalhado de cada tipo de movimento
-    tiposMovimento.forEach((tipo, index) => {
-      console.log(`📋 [ALTERDATA MOVIMENTOS API] Tipo de Movimento ${index + 1}:`, {
-        id: tipo.id,
-        type: tipo.type,
-        codigo: tipo.attributes?.codigo,
-        nome: tipo.attributes?.nome,
-        descricao: tipo.attributes?.descricao,
-        attributesCompletos: tipo.attributes,
-        relationshipsCompletos: tipo.relationships
-      });
-    });
+    const eventos = Array.isArray(data.data) ? data.data : [];
     
-    // Criar mapeamento: código verba → { tipomovimentoId, eventoId }
-    // O eventCode Flash corresponde ao codigo do evento na AlterData
-    const mapeamento = {};
+    console.log(`📋 [ALTERDATA MOVIMENTOS API] Total de eventos na resposta: ${eventos.length}`);
     
-    eventos.forEach(evento => {
-      const codigo = evento.attributes?.codigo;
-      const tipomovimentoId = evento.relationships?.tipomovimento?.data?.id;
-      const eventoId = evento.id;
-      
-      if (codigo) {
-        mapeamento[String(codigo)] = {
-          tipomovimento: tipomovimentoId || null,
-          eventoId: eventoId, // ID do evento na AlterData
-          nomeEvento: evento.attributes?.nome,
-          codigoEvento: codigo,
-          dadosCompletos: {
-            evento: evento,
-            tipomovimento: tiposMovimento.find(t => t.id === tipomovimentoId)
-          }
-        };
-      }
-    });
+    if (eventos.length === 0) {
+      console.error(`❌ [ALTERDATA MOVIMENTOS API] Evento com código "${codigoVerba}" não encontrado`);
+      throw new Error(`Evento com código "${codigoVerba}" não encontrado na AlterData`);
+    }
     
-    console.log('📋 [ALTERDATA MOVIMENTOS API] ===== MAPEAMENTO CRIADO =====');
-    console.log('📋 [ALTERDATA MOVIMENTOS API] Código Verba (eventCode Flash) → { tipomovimento, eventoId, nome }');
-    Object.entries(mapeamento).forEach(([codigo, dados]) => {
-      console.log(`📋 [ALTERDATA MOVIMENTOS API]   ${codigo} → { tipomovimento: ${dados.tipomovimento}, eventoId: ${dados.eventoId}, nome: "${dados.nomeEvento}" }`);
-    });
-    console.log('📋 [ALTERDATA MOVIMENTOS API] ==============================');
+    const evento = eventos[0];
     
-    VERBA_ALTERDATA_TO_TIPOMOVIMENTO_EVENTO = mapeamento;
+    console.log('📋 [ALTERDATA MOVIMENTOS API] ===== DETALHES DO EVENTO ENCONTRADO =====');
+    console.log(JSON.stringify({
+      id: evento.id,
+      type: evento.type,
+      codigo: evento.attributes?.codigo,
+      nome: evento.attributes?.nome,
+      descricao: evento.attributes?.descricao,
+      attributesCompletos: evento.attributes,
+      relationships: evento.relationships,
+      tipomovimentoId: evento.relationships?.tipomovimento?.data?.id
+    }, null, 2));
+    console.log('📋 [ALTERDATA MOVIMENTOS API] ===========================================');
     
-    return mapeamento;
+    const tipomovimentoId = evento.relationships?.tipomovimento?.data?.id || '1'; // Padrão: 1 (Folha)
+    
+    const eventoInfo = {
+      eventoId: evento.id,
+      tipomovimentoId: tipomovimentoId,
+      nome: evento.attributes?.nome || `Evento ${codigoVerba}`,
+      codigo: codigoVerba
+    };
+    
+    console.log('📋 [ALTERDATA MOVIMENTOS API] ===== INFORMAÇÕES PROCESSADAS DO EVENTO =====');
+    console.log(JSON.stringify(eventoInfo, null, 2));
+    console.log('📋 [ALTERDATA MOVIMENTOS API] =============================================');
+    
+    // Armazenar no cache
+    cacheEventosAlterData[codigoVerba] = eventoInfo;
+    
+    console.log(`✅ [ALTERDATA MOVIMENTOS API] Evento encontrado: código ${codigoVerba} → ID ${eventoInfo.eventoId} (${eventoInfo.nome})`);
+    console.log('📋 [ALTERDATA MOVIMENTOS API] ==========================================');
+    
+    return eventoInfo;
     
   } catch (error) {
-    console.error('❌ [ALTERDATA MOVIMENTOS API] Erro ao buscar verbas:', error);
+    console.error(`❌ [ALTERDATA MOVIMENTOS API] Erro ao buscar evento por código ${codigoVerba}:`, error.message);
     throw error;
   }
 }
@@ -250,6 +180,11 @@ async function buscarEmpresasAlterData() {
   url.searchParams.append('page[offset]', '0');
   url.searchParams.append('page[limit]', '1000'); // Buscar muitas empresas
   
+  console.log('📋 [ALTERDATA MOVIMENTOS API] ==========================================');
+  console.log('📋 [ALTERDATA MOVIMENTOS API] Buscando empresas da AlterData...');
+  console.log(`📋 [ALTERDATA MOVIMENTOS API] URL: ${url.toString()}`);
+  console.log('📋 [ALTERDATA MOVIMENTOS API] ==========================================');
+  
   const response = await fetch(url.toString(), {
     method: 'GET',
     headers: {
@@ -259,15 +194,43 @@ async function buscarEmpresasAlterData() {
     }
   });
   
+  console.log(`📋 [ALTERDATA MOVIMENTOS API] Status da resposta: ${response.status} ${response.statusText}`);
+  
   if (!response.ok) {
     const errorText = await response.text();
+    console.error('❌ [ALTERDATA MOVIMENTOS API] ===== ERRO NA RESPOSTA =====');
+    console.error(errorText);
+    console.error('❌ [ALTERDATA MOVIMENTOS API] ============================');
     throw new Error(`Erro ao buscar empresas da AlterData: ${response.status} - ${errorText}`);
   }
   
   const data = await response.json();
+  
+  console.log('📋 [ALTERDATA MOVIMENTOS API] ===== RESPOSTA COMPLETA DA API DE EMPRESAS =====');
+  console.log(JSON.stringify(data, null, 2));
+  console.log('📋 [ALTERDATA MOVIMENTOS API] =================================================');
+  
   const empresas = Array.isArray(data.data) ? data.data : [];
   
-  // Formatar empresas: { nome: id }
+  console.log(`📋 [ALTERDATA MOVIMENTOS API] Total de empresas na resposta: ${empresas.length}`);
+  console.log('📋 [ALTERDATA MOVIMENTOS API] ===== DETALHES DAS EMPRESAS =====');
+  
+  empresas.forEach((empresa, index) => {
+    console.log(`📋 [ALTERDATA MOVIMENTOS API] Empresa ${index + 1}:`, {
+      id: empresa.id,
+      type: empresa.type,
+      nome: empresa.attributes?.nome || empresa.attributes?.razaoSocial || 'Sem nome',
+      razaoSocial: empresa.attributes?.razaoSocial,
+      cnpj: empresa.attributes?.cnpj,
+      ativa: empresa.attributes?.ativa,
+      attributesCompletos: empresa.attributes,
+      relationships: empresa.relationships
+    });
+  });
+  
+  console.log('📋 [ALTERDATA MOVIMENTOS API] ===========================================');
+  
+  // Formatar empresas: { nome: { id, externoid, ... } }
   const empresasMap = {};
   empresas.forEach(empresa => {
     const nome = empresa.attributes?.nome || empresa.attributes?.razaoSocial || '';
@@ -276,13 +239,22 @@ async function buscarEmpresasAlterData() {
       const nomeNormalizado = nome.trim().toUpperCase();
       empresasMap[nomeNormalizado] = {
         id: empresa.id,
+        externoid: empresa.attributes?.externoid || empresa.attributes?.externoId || null,
         nomeOriginal: nome,
         nomeNormalizado: nomeNormalizado
       };
     }
   });
   
+  // Log do mapeamento de empresas com externoid
+  console.log('📋 [ALTERDATA MOVIMENTOS API] ===== MAPEAMENTO DE EMPRESAS COM EXTERNOID =====');
+  Object.entries(empresasMap).forEach(([nome, dados]) => {
+    console.log(`📋 [ALTERDATA MOVIMENTOS API] "${nome}": ID=${dados.id}, EXTERNOID=${dados.externoid}`);
+  });
+  console.log('📋 [ALTERDATA MOVIMENTOS API] ================================================');
+  
   console.log(`✅ [ALTERDATA MOVIMENTOS API] ${Object.keys(empresasMap).length} empresa(s) carregada(s) da AlterData`);
+  console.log('📋 [ALTERDATA MOVIMENTOS API] ==========================================');
   
   return empresasMap;
 }
@@ -327,12 +299,22 @@ async function buscarNomeEmpresaFlash(companyId) {
 function encontrarIdAlterDataPorNome(nomeFlash, empresasAlterData) {
   const nomeNormalizado = nomeFlash.trim().toUpperCase();
   
-  // Tentar match exato primeiro
+  // 1. Verificar se existe mapeamento manual primeiro
+  const nomeAlterDataMapeado = MAPEAMENTO_EMPRESAS_FLASH_ALTERDATA[nomeNormalizado];
+  if (nomeAlterDataMapeado) {
+    const nomeAlterDataNormalizado = nomeAlterDataMapeado.trim().toUpperCase();
+    if (empresasAlterData[nomeAlterDataNormalizado]) {
+      console.log(`✅ [ALTERDATA MOVIMENTOS API] Mapeamento manual: "${nomeFlash}" → "${nomeAlterDataMapeado}"`);
+      return empresasAlterData[nomeAlterDataNormalizado].id;
+    }
+  }
+  
+  // 2. Tentar match exato
   if (empresasAlterData[nomeNormalizado]) {
     return empresasAlterData[nomeNormalizado].id;
   }
   
-  // Tentar match parcial (caso o nome tenha diferenças pequenas)
+  // 3. Tentar match parcial (caso o nome tenha diferenças pequenas)
   for (const [nomeAlt, dados] of Object.entries(empresasAlterData)) {
     if (nomeAlt.includes(nomeNormalizado) || nomeNormalizado.includes(nomeAlt)) {
       console.log(`⚠️ [ALTERDATA MOVIMENTOS API] Match parcial encontrado: "${nomeFlash}" ≈ "${dados.nomeOriginal}"`);
@@ -396,62 +378,41 @@ async function buscarFuncionariosAlterDataPorEmpresa(empresaIdAlterData) {
 }
 
 // Função para mapear verba Flash para movimento AlterData
-function mapBudgetToMovimento(event, funcionario, alterDataCompanyId, mapaMatriculaId, year, month) {
+async function mapBudgetToMovimento(event, funcionario, alterDataCompanyId, mapaMatriculaId, year, month) {
   const period = getPeriodFromYearMonth(parseInt(year), parseInt(month));
   
-  // 1. Converter eventCode Flash para código Verba AlterData usando a tabela de mapeamento
-  const eventCodeFlash = String(event.eventCode || '');
+  // Usar o eventCode que já vem da API de verbas (já é o código correto da AlterData)
+  const codigoVerbaAlterData = String(event.eventCode || '');
   
   console.log(`🔍 [ALTERDATA MOVIMENTOS API] Mapeamento de verba:`);
-  console.log(`   EventCode Flash: ${eventCodeFlash}`);
+  console.log(`   EventCode (AlterData): ${codigoVerbaAlterData}`);
   
-  if (!eventCodeFlash) {
+  if (!codigoVerbaAlterData) {
     throw new Error('EventCode não informado no evento');
   }
   
-  // Converter usando a tabela de mapeamento (se existir), senão usar o próprio eventCode
-  const codigoVerbaAlterData = EVENT_CODE_TO_VERBA_ALTERDATA[eventCodeFlash] || eventCodeFlash;
+  // Buscar evento específico pelo código AlterData
+  const eventoInfo = await buscarEventoAlterDataPorCodigo(codigoVerbaAlterData);
   
-  console.log(`   Código Verba AlterData: ${codigoVerbaAlterData} ${EVENT_CODE_TO_VERBA_ALTERDATA[eventCodeFlash] ? '(mapeado)' : '(direto)'}`);
-  
-  // 2. Buscar evento pelo código AlterData
-  const eventoInfo = VERBA_ALTERDATA_TO_TIPOMOVIMENTO_EVENTO[codigoVerbaAlterData];
-  
-  if (!eventoInfo) {
-    const eventosDisponiveis = Object.keys(VERBA_ALTERDATA_TO_TIPOMOVIMENTO_EVENTO).slice(0, 20).join(', ');
+  if (!eventoInfo || !eventoInfo.eventoId) {
     throw new Error(
-      `Evento com código AlterData "${codigoVerbaAlterData}" não encontrado na API. ` +
-      `Códigos disponíveis: ${eventosDisponiveis || 'nenhuma (buscar verbas primeiro)'}...`
+      `Evento com código AlterData "${codigoVerbaAlterData}" não encontrado.`
     );
   }
   
-  const tipomovimentoId = eventoInfo.tipomovimento;
-  const eventoIdAlterData = eventoInfo.eventoId; // ID do evento na AlterData (não o código)
-  
-  if (!eventoIdAlterData) {
-    throw new Error(
-      `Evento com código "${codigoVerbaAlterData}" não possui ID válido na AlterData.`
-    );
-  }
-  
-  // Se tipomovimento não vier no relacionamento, usar padrão "1" (Folha)
-  const tipomovimentoFinal = tipomovimentoId || '1';
-  
-  if (!tipomovimentoId) {
-    console.log(`   ⚠️ Tipomovimento não encontrado no relacionamento, usando padrão: "1" (Folha)`);
-  }
+  const tipomovimentoId = eventoInfo.tipomovimentoId || '1'; // Padrão: 1 (Folha)
+  const eventoIdAlterData = eventoInfo.eventoId;
   
   console.log(`   Evento encontrado:`, {
-    eventCodeFlash: eventCodeFlash,
     codigoAlterData: codigoVerbaAlterData,
     idAlterData: eventoIdAlterData,
-    nome: eventoInfo.nomeEvento,
-    tipomovimento: tipomovimentoFinal
+    nome: eventoInfo.nome,
+    tipomovimento: tipomovimentoId
   });
   
   console.log(`   Mapeamento final:`, {
-    eventoId: eventoIdAlterData, // ← Usar ID do evento na AlterData
-    tipomovimentoId: tipomovimentoFinal
+    eventoId: eventoIdAlterData,
+    tipomovimentoId: tipomovimentoId
   });
   
   // Pegar matrícula do funcionário Flash
@@ -477,14 +438,64 @@ function mapBudgetToMovimento(event, funcionario, alterDataCompanyId, mapaMatric
   
   console.log(`✅ [ALTERDATA MOVIMENTOS API] Matrícula "${matriculaNormalizada}" → ID AlterData: ${funcionarioIdAlterData}`);
   
-  // Formatar valor - usar horas:minutos se disponível, senão usar valor decimal
-  let valor = event.hm || '0:00';
-  if (!event.hm && event.decimal) {
-    // Converter decimal para horas:minutos (ex: 7.75 = 7:45)
-    const decimalValue = parseFloat(event.decimal);
-    const hours = Math.floor(decimalValue);
-    const minutes = Math.round((decimalValue - hours) * 60);
-    valor = `${hours}:${String(minutes).padStart(2, '0')}`;
+  // Formatar valor - verificar se é evento de dias ou horas
+  const isDiasType = event.type && event.type.toUpperCase() === 'DIAS';
+  const isDiasDescription = event.description && (
+    event.description.toLowerCase().includes('dia') || 
+    event.description.toLowerCase().includes('atestado') ||
+    event.description.toLowerCase().includes('falt')
+  );
+  const isDiasEvent = isDiasType || isDiasDescription;
+  
+  let valor = null;
+  
+  if (isDiasEvent) {
+    // Para eventos de dias, usar event.value (quantidade de dias)
+    if (event.value && event.value !== null && event.value !== '') {
+      const diasValue = parseFloat(event.value);
+      if (!isNaN(diasValue) && diasValue > 0) {
+        valor = String(diasValue); // Número de dias como string
+        console.log(`   Valor (dias): ${valor}`);
+      }
+    } else if (event.decimal && event.decimal !== null) {
+      // Se tiver decimal, pode ser quantidade de dias
+      const diasValue = parseFloat(event.decimal);
+      if (!isNaN(diasValue) && diasValue > 0) {
+        valor = String(Math.round(diasValue)); // Arredondar para inteiro
+        console.log(`   Valor (dias do decimal): ${valor}`);
+      }
+    } else {
+      // Se não houver valor, usar padrão de 1 dia para eventos de dias
+      console.log(`   ⚠️ Evento de dias sem valor definido, usando padrão: 1 dia`);
+      valor = '1'; // Padrão: 1 dia
+    }
+  } else {
+    // Para eventos de horas, usar formato horas:minutos
+    if (event.hm && event.hm !== null && event.hm !== '' && event.hm !== '0:00') {
+      // Formato já está em horas:minutos (ex: "7:45")
+      valor = event.hm;
+      console.log(`   Valor formatado (horas): ${valor}`);
+    } else if (event.decimal && event.decimal !== null) {
+      // Converter decimal para horas:minutos (ex: 7.75 = 7:45)
+      const decimalValue = parseFloat(event.decimal);
+      if (!isNaN(decimalValue) && decimalValue > 0) {
+        const hours = Math.floor(decimalValue);
+        const minutes = Math.round((decimalValue - hours) * 60);
+        valor = `${hours}:${String(minutes).padStart(2, '0')}`;
+        console.log(`   Valor formatado (horas do decimal): ${valor}`);
+      }
+    } else if (event.value && event.value !== null) {
+      // Tentar usar value se for string no formato horas:minutos
+      const eventValueStr = String(event.value);
+      if (eventValueStr.includes(':') && eventValueStr !== '0:00') {
+        valor = eventValueStr;
+        console.log(`   Valor formatado (horas do value): ${valor}`);
+      }
+    }
+    
+    if (!valor) {
+      throw new Error(`Evento requer valor (horas ou dias), mas nenhum foi encontrado. Campos disponíveis: type=${event.type || 'N/A'}, hm=${event.hm || 'N/A'}, decimal=${event.decimal || 'N/A'}, value=${event.value || 'N/A'}, description=${event.description || 'N/A'}`);
+    }
   }
   
   return {
@@ -505,7 +516,7 @@ function mapBudgetToMovimento(event, funcionario, alterDataCompanyId, mapaMatric
         },
         tipomovimento: {
           data: {
-            id: String(tipomovimentoFinal),
+            id: String(tipomovimentoId),
             type: 'tipos-movimento'
           }
         },
@@ -605,10 +616,6 @@ export async function POST(request) {
       );
     }
     
-    // Buscar verbas da AlterData primeiro (para ter o mapeamento completo)
-    console.log('📋 [ALTERDATA MOVIMENTOS API] Buscando verbas/eventos da AlterData...');
-    await buscarVerbasAlterData();
-    
     // Buscar empresas da AlterData uma vez no início
     console.log('📋 [ALTERDATA MOVIMENTOS API] Buscando empresas da AlterData...');
     const empresasAlterData = await buscarEmpresasAlterData();
@@ -685,7 +692,7 @@ export async function POST(request) {
         });
         
         // Mapear para formato AlterData (usando mapa de matrícula → id)
-        const movimento = mapBudgetToMovimento(
+        const movimento = await mapBudgetToMovimento(
           event,
           funcionario,
           alterDataCompanyId,
