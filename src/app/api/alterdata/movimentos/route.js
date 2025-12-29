@@ -64,6 +64,38 @@ const EVENT_CODE_TO_VERBA_ALTERDATA = {
 // Cache de eventos já buscados: código verba → { eventoId, tipomovimentoId, nome }
 const cacheEventosAlterData = {};
 
+// Função para buscar tipos de movimento disponíveis
+async function buscarTiposMovimento() {
+  const token = process.env.ALTERDATA_API_TOKEN;
+  
+  if (!token) {
+    throw new Error('ALTERDATA_API_TOKEN não configurado no .env');
+  }
+  
+  const url = new URL(ALTERDATA_TIPOS_MOVIMENTO_URL);
+  url.searchParams.append('page[offset]', '0');
+  url.searchParams.append('page[limit]', '100');
+  
+  const response = await fetch(url.toString(), {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/vnd.api+json',
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/vnd.api+json'
+    }
+  });
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Erro ao buscar tipos de movimento: ${response.status} - ${errorText}`);
+  }
+  
+  const data = await response.json();
+  const tipos = Array.isArray(data.data) ? data.data : [];
+  
+  return tipos;
+}
+
 // Função para buscar um evento específico da AlterData por código
 // Baseada na tabela de mapeamento fornecida
 async function buscarEventoAlterDataPorCodigo(codigoVerba) {
@@ -147,7 +179,8 @@ async function buscarEventoAlterDataPorCodigo(codigoVerba) {
       eventoId: evento.id,
       tipomovimentoId: tipomovimentoId,
       nome: evento.attributes?.nome || `Evento ${codigoVerba}`,
-      codigo: codigoVerba
+      codigo: codigoVerba,
+      tipoConfiguracao: evento.attributes?.tipoConfiguracao || null
     };
     
     console.log('📋 [ALTERDATA MOVIMENTOS API] ===== INFORMAÇÕES PROCESSADAS DO EVENTO =====');
@@ -400,19 +433,29 @@ async function mapBudgetToMovimento(event, funcionario, alterDataCompanyId, mapa
     );
   }
   
-  const tipomovimentoId = eventoInfo.tipomovimentoId || '1'; // Padrão: 1 (Folha)
+  // Usar o eventCode da Flash diretamente para determinar o tipomovimentoId
+  // Usar sempre "1" (Folha) como padrão baseado no código do evento da Flash
+  const tipomovimentoId = '1'; // Padrão: 1 (Folha) - baseado no eventCode da Flash
   const eventoIdAlterData = eventoInfo.eventoId;
+  const tipoConfiguracao = eventoInfo.tipoConfiguracao; // "FT" para Faltas, "GB" para outros
+  
+  // Verificar se é evento de Faltas pelo tipoConfiguracao
+  const isFaltasByTipoConfig = tipoConfiguracao === 'FT';
+  
+  console.log(`   ℹ️ Usando tipomovimentoId baseado no eventCode da Flash: ${tipomovimentoId}`);
   
   console.log(`   Evento encontrado:`, {
     codigoAlterData: codigoVerbaAlterData,
     idAlterData: eventoIdAlterData,
     nome: eventoInfo.nome,
-    tipomovimento: tipomovimentoId
+    tipomovimento: tipomovimentoId,
+    tipoConfiguracao: tipoConfiguracao
   });
   
   console.log(`   Mapeamento final:`, {
     eventoId: eventoIdAlterData,
-    tipomovimentoId: tipomovimentoId
+    tipomovimentoId: tipomovimentoId,
+    isFaltasEvent: isFaltasByTipoConfig
   });
   
   // Pegar matrícula do funcionário Flash
@@ -447,14 +490,22 @@ async function mapBudgetToMovimento(event, funcionario, alterDataCompanyId, mapa
   );
   const isDiasEvent = isDiasType || isDiasDescription;
   
+  // Verificar se é evento de Faltas especificamente
+  const isFaltasEvent = event.description && event.description.toLowerCase().includes('falt');
+  
   let valor = null;
   
   if (isDiasEvent) {
-    // Para eventos de dias, usar event.value (quantidade de dias)
-    if (event.value && event.value !== null && event.value !== '') {
+    // Para eventos de dias, verificar primeiro se tem valor em horas:minutos (caso de Faltas)
+    if (isFaltasEvent && event.hm && event.hm !== null && event.hm !== '' && event.hm !== '0:00') {
+      // Para Faltas, manter o valor em horas:minutos (será usado para calcular dias de falta)
+      valor = event.hm; // Manter como string no formato horas:minutos
+      console.log(`   Valor (Faltas - horas:minutos): ${valor}`);
+    } else if (event.value && event.value !== null && event.value !== '') {
+      // Se tiver value direto, usar como dias
       const diasValue = parseFloat(event.value);
       if (!isNaN(diasValue) && diasValue > 0) {
-        valor = String(diasValue); // Número de dias como string
+        valor = String(Math.round(diasValue)); // Arredondar para inteiro
         console.log(`   Valor (dias): ${valor}`);
       }
     } else if (event.decimal && event.decimal !== null) {
@@ -498,7 +549,96 @@ async function mapBudgetToMovimento(event, funcionario, alterDataCompanyId, mapa
     }
   }
   
-  return {
+  // Para eventos de Faltas, usar formato horas:minutos como string e preencher array faltas
+  // Para outros eventos de dias, converter valor para número; para eventos de horas, manter como string
+  let valorFinal;
+  let faltasArray = [];
+  
+  if (isFaltasByTipoConfig) {
+    // Eventos de Faltas: manter valor como string no formato horas:minutos
+    if (valor && valor.includes(':')) {
+      // Já está em formato horas:minutos
+      valorFinal = valor;
+    } else if (valor && !isNaN(Number(valor))) {
+      // Se o valor está em dias, converter para horas:minutos (assumindo 8h por dia)
+      const diasValue = Number(valor);
+      const totalHours = Math.round(diasValue * 8);
+      const hours = Math.floor(totalHours);
+      const minutes = Math.round((totalHours - hours) * 60);
+      valorFinal = `${hours}:${String(minutes).padStart(2, '0')}`;
+    } else {
+      valorFinal = '0:00';
+    }
+    
+    // Preencher array faltas com os dias de falta
+    // Calcular quantos dias de falta baseado no valor (horas:minutos)
+    let diasFalta = 1; // Padrão: 1 dia
+    if (valorFinal && valorFinal.includes(':')) {
+      const [hours, minutes] = valorFinal.split(':').map(Number);
+      const totalHours = hours + (minutes / 60);
+      diasFalta = Math.ceil(totalHours / 8); // 8 horas = 1 dia de trabalho, arredondar para cima
+    } else if (valor && !isNaN(Number(valor))) {
+      diasFalta = Math.ceil(Number(valor)); // Se veio em dias, usar diretamente
+    }
+    const startDate = new Date(period.inicio);
+    const endDate = new Date(period.fim);
+    
+    // Formatar datas no formato YYYY-MM-DD
+    const formatDate = (date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    
+    const inicioStr = formatDate(startDate);
+    const fimStr = formatDate(endDate);
+    
+    // Gerar dias de falta distribuídos ao longo do período
+    // Distribuir os dias uniformemente ao longo do período
+    const diasNoPeriodo = Math.floor((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+    
+    if (diasFalta > 0 && diasNoPeriodo > 0) {
+      const intervalo = Math.max(1, Math.floor(diasNoPeriodo / (diasFalta + 1)));
+      
+      for (let i = 0; i < diasFalta; i++) {
+        const diaFalta = new Date(startDate);
+        // Distribuir os dias ao longo do período, começando após alguns dias
+        const offset = (i + 1) * intervalo;
+        diaFalta.setDate(startDate.getDate() + offset);
+        
+        // Garantir que não ultrapasse o fim do período
+        if (diaFalta > endDate) {
+          diaFalta.setTime(endDate.getTime());
+        }
+        
+        // Garantir que não seja antes do início
+        if (diaFalta < startDate) {
+          diaFalta.setTime(startDate.getTime());
+        }
+        
+        faltasArray.push({
+          empresaId: String(alterDataCompanyId),
+          empresa: null,
+          funcionarioId: String(funcionarioIdAlterData),
+          funcionario: null,
+          inicio: inicioStr,
+          fim: fimStr,
+          dia: formatDate(diaFalta)
+        });
+      }
+    }
+    
+    console.log(`   📅 Array faltas preenchido com ${faltasArray.length} dia(s) de falta`);
+  } else if (isDiasEvent && valor) {
+    // Outros eventos de dias: converter para número
+    valorFinal = Number(valor);
+  } else {
+    // Eventos de horas: manter como string
+    valorFinal = valor || '0';
+  }
+  
+  const movimentoData = {
     data: {
       type: 'movimentos',
       relationships: {
@@ -522,16 +662,19 @@ async function mapBudgetToMovimento(event, funcionario, alterDataCompanyId, mapa
         },
         evento: {
           data: {
-            id: String(eventoIdAlterData), // ← USAR ID do evento encontrado pelo código
+            id: String(eventoIdAlterData),
             type: 'eventos'
           }
         }
       },
       attributes: {
         databaixa: null,
-        faltas: [],
+        faltas: faltasArray,
         created: new Date().toISOString(),
-        valor: valor,
+        // Para eventos de Faltas: valor como string no formato horas:minutos
+        // Para outros eventos de dias: valor como número
+        // Para eventos de horas: valor como string (horas:minutos)
+        valor: valorFinal,
         inicio: period.inicio,
         fim: period.fim,
         horaquantidade: null,
@@ -539,6 +682,8 @@ async function mapBudgetToMovimento(event, funcionario, alterDataCompanyId, mapa
       }
     }
   };
+  
+  return movimentoData;
 }
 
 // Função para enviar movimento para API AlterData
@@ -615,6 +760,10 @@ export async function POST(request) {
         { status: 400 }
       );
     }
+    
+    // Buscar tipos de movimento disponíveis para debug
+    console.log('📋 [ALTERDATA MOVIMENTOS API] Buscando tipos de movimento...');
+    const tiposMovimento = await buscarTiposMovimento();
     
     // Buscar empresas da AlterData uma vez no início
     console.log('📋 [ALTERDATA MOVIMENTOS API] Buscando empresas da AlterData...');
