@@ -57,6 +57,7 @@ export default function Dashboard() {
   const [alterDataFuncionarios, setAlterDataFuncionarios] = useState({}); // { empresaId: [funcionarios] }
   const [loadingFuncionarios, setLoadingFuncionarios] = useState({}); // { empresaId: true/false }
   const [expandedEmpresaFuncionarios, setExpandedEmpresaFuncionarios] = useState(new Set()); // IDs das empresas com funcionários expandidos
+  const [filtroFuncionarios, setFiltroFuncionarios] = useState({}); // { empresaId: 'texto de busca' }
 
   // Filtros
   const [filters, setFilters] = useState({
@@ -87,7 +88,7 @@ export default function Dashboard() {
     externalIds: '',
     budgetConfigId: '',
     page: 1,
-    pageSize: 20,
+    pageSize: 10,
   });
 
   const [pagination, setPagination] = useState({
@@ -2005,7 +2006,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        <div className="p-8 bg-gray-50/50">
+        <div className="p-8 bg-gray-50/50 max-h-[600px] overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#cbd5e1 #f1f5f9' }}>
           {budgets.length > 0 ? (
             <div className="space-y-5">
               {budgets.map((funcionario, idx) => {
@@ -2633,12 +2634,72 @@ export default function Dashboard() {
                                     <p className="text-sm text-gray-600">Nenhum funcionário encontrado</p>
                                   </div>
                                 ) : (
-                                  <div className="space-y-2">
-                                    <h5 className="text-sm font-bold text-gray-700 mb-3">
-                                      Funcionários ({funcionarios.length})
-                                    </h5>
-                                    <div className="max-h-96 overflow-y-auto space-y-2">
-                                      {funcionarios.map((func, funcIdx) => (
+                                  <div className="space-y-3">
+                                    {/* Barra de Pesquisa */}
+                                    <div className="mb-4">
+                                      <div className="relative">
+                                        <FiSearch className="absolute left-3.5 top-1/2 transform -translate-y-1/2 text-gray-400 z-10 pointer-events-none" size={18} />
+                                        <input
+                                          type="text"
+                                          placeholder="Pesquisar funcionários por nome, ID ou matrícula..."
+                                          value={filtroFuncionarios[empresaId] || ''}
+                                          onChange={(e) => {
+                                            setFiltroFuncionarios(prev => ({
+                                              ...prev,
+                                              [empresaId]: e.target.value
+                                            }));
+                                          }}
+                                          className="w-full pl-12 pr-10 py-2.5 bg-white border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm text-gray-900 placeholder:text-gray-400 transition-all duration-200 hover:border-gray-400"
+                                        />
+                                        {filtroFuncionarios[empresaId] && (
+                                          <button
+                                            onClick={() => {
+                                              setFiltroFuncionarios(prev => {
+                                                const newFiltro = { ...prev };
+                                                delete newFiltro[empresaId];
+                                                return newFiltro;
+                                              });
+                                            }}
+                                            className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-all duration-200"
+                                            title="Limpar busca"
+                                          >
+                                            <FiX size={16} />
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                    
+                                    {/* Lista de Funcionários Filtrados */}
+                                    {(() => {
+                                      const termoBusca = (filtroFuncionarios[empresaId] || '').toLowerCase().trim();
+                                      const funcionariosFiltrados = termoBusca
+                                        ? funcionarios.filter(func => {
+                                            const nome = (func.nome || '').toLowerCase();
+                                            const id = String(func.id || '').toLowerCase();
+                                            const codigo = String(func.codigo || '').toLowerCase();
+                                            return nome.includes(termoBusca) || id.includes(termoBusca) || codigo.includes(termoBusca);
+                                          })
+                                        : funcionarios;
+                                      
+                                      return (
+                                        <>
+                                          <div className="flex items-center justify-between mb-3">
+                                            <h5 className="text-sm font-semibold text-gray-800">
+                                              Funcionários
+                                            </h5>
+                                            <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full">
+                                              {funcionariosFiltrados.length}{termoBusca ? ` de ${funcionarios.length}` : ''}
+                                            </span>
+                                          </div>
+                                          {funcionariosFiltrados.length === 0 ? (
+                                            <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200">
+                                              <FiSearch className="text-gray-400 mx-auto mb-3" size={28} />
+                                              <p className="text-sm font-medium text-gray-600 mb-1">Nenhum resultado encontrado</p>
+                                              <p className="text-xs text-gray-500">Tente buscar por nome, ID ou matrícula</p>
+                                            </div>
+                                          ) : (
+                                            <div className="max-h-96 overflow-y-auto space-y-2 pr-1">
+                                              {funcionariosFiltrados.map((func, funcIdx) => (
                                         <div
                                           key={func.id || funcIdx}
                                           className="p-3 rounded-lg border border-gray-200 bg-white hover:border-blue-300 transition-colors"
@@ -2679,7 +2740,11 @@ export default function Dashboard() {
                                           </div>
                                         </div>
                                       ))}
-                                    </div>
+                                            </div>
+                                          )}
+                                        </>
+                                      );
+                                    })()}
                                   </div>
                                 )}
                               </div>
